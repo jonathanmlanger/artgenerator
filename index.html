@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Image Studio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Image Studio</h1>
+    <div class="topbar-right">
+      <span id="conn" class="conn" title="Connection status">Not connected</span>
+      <button id="openSettings" class="ghost">Settings</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls" aria-label="Generation settings">
+      <label for="model">Model</label>
+      <select id="model"></select>
+      <p id="modelNote" class="hint"></p>
+
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" rows="6" placeholder="Describe the image in full sentences: subject, setting, lighting, camera or art style…"></textarea>
+
+      <div id="negWrap">
+        <label for="negative">Negative prompt <span class="hint-inline">(what to avoid)</span></label>
+        <textarea id="negative" rows="3"></textarea>
+      </div>
+
+      <label>Aspect ratio</label>
+      <div id="sizes" class="chips" role="radiogroup"></div>
+
+      <div class="row">
+        <div>
+          <label for="count">Images</label>
+          <select id="count"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </div>
+        <div>
+          <label for="seed">Seed</label>
+          <input id="seed" type="number" placeholder="random" min="0">
+        </div>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <div class="row">
+          <div>
+            <label for="steps">Steps</label>
+            <input id="steps" type="number" min="1" max="80">
+          </div>
+          <div>
+            <label for="cfg">CFG</label>
+            <input id="cfg" type="number" min="1" max="15" step="0.5">
+          </div>
+        </div>
+        <button id="resetAdvanced" class="ghost small">Reset to model defaults</button>
+      </details>
+
+      <button id="generate" class="primary">Generate</button>
+      <button id="cancel" class="ghost" hidden>Cancel</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="gallery-wrap" aria-label="Your images">
+      <div class="gallery-head">
+        <h2>Gallery</h2>
+        <span class="hint">Saved only in this browser</span>
+      </div>
+      <div id="gallery" class="gallery"></div>
+      <p id="empty" class="empty">Your images will appear here.</p>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>Connect to RunPod</h2>
+      <label for="endpointId">Endpoint ID</label>
+      <input id="endpointId" autocomplete="off" spellcheck="false" placeholder="e.g. abc123xyz456">
+      <label for="apiKey">RunPod API key</label>
+      <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="rpa_…">
+      <label class="check"><input id="remember" type="checkbox" checked> Remember on this device</label>
+      <p class="hint">Your key is stored only in this browser and sent only to api.runpod.ai. It is never part of the website's code.</p>
+      <div class="dialog-actions">
+        <button id="testConn" type="button" class="ghost">Test connection</button>
+        <button id="forget" type="button" class="ghost danger">Forget key</button>
+        <button value="save" class="primary">Save</button>
+      </div>
+      <p id="testResult" class="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="viewer" class="viewer">
+    <img id="viewerImg" alt="">
+    <div class="viewer-bar">
+      <p id="viewerMeta" class="viewer-meta"></p>
+      <div class="viewer-actions">
+        <button id="vReuse" class="ghost">Reuse settings</button>
+        <a id="vDownload" class="button ghost" download>Download</a>
+        <button id="vDelete" class="ghost danger">Delete</button>
+        <button id="vClose" class="primary">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="workflows.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
