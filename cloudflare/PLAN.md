@@ -47,15 +47,10 @@ Stop typing keys on every device. Instead:
 - `cloudflare/build.mjs`: bundles the app files into `cloudflare/dist/worker.js`.
 - **App "server mode"** (`app.js`, `cloud.js`, `index.html`): detects `/api/config` at startup, then routes RunPod calls through `/api/runpod/...` and storage through `/api/files`, saves RunPod settings with `PUT /api/config`, hides the browser-key fields, and adds **Change password** and **Sign out**. The GitHub Pages version is unchanged.
 - **Tested locally** with Miniflare (mock R2, mocked RunPod) and Playwright: login, proxy, edit-endpoint routing, file API, sync, `_config/` hidden, password change signing out other devices, sign out. All passed.
-- **Partly deployed (2026-11-17):** a script named `image-studio` with the `BUCKET` binding was uploaded, but it has **no secrets and no address yet**, so it can't be reached. That upload also included some unused files from the build folder; redeploy from a folder holding only `dist/worker.js`.
+- **Deployed (2026-11-17)** at https://image-studio.milbathepenguin.workers.dev with the `BUCKET` binding, the `SESSION_SECRET` and `PASSWORD_HASH` secrets, and preview URLs turned off. Checked live: login page, wrong password refused, sign-in, `/api/config`, `/api/files`. To redeploy: `node cloudflare/build.mjs`, then run `wrangler deploy` from a folder holding only the built `worker.js` and a `wrangler.toml` (name `image-studio`, `workers_dev = true`, `preview_urls = false`, `no_bundle = true`, R2 binding `BUCKET` → `image-studio`).
 
 ## To do
 
-3. **Finish deploying.**
-   - The account has **no workers.dev subdomain yet**. Either open Workers & Pages in the dashboard once (it creates one automatically), or choose a name and create it via the API. Needs a Cloudflare API token from the user, created from the **"Edit Cloudflare Workers"** template.
-   - Upload the script with the R2 binding `BUCKET` = `image-studio`, plus the secrets `SESSION_SECRET` and `PASSWORD_HASH`.
-   - Enable the workers.dev address.
-   - Give the user the generated password.
 4. **User:** sign in, then enter the RunPod key and both endpoint IDs once in Settings:
    - main: `qn0cz6iqt4tzj6`
    - character reference: `kql1vtdh6u4qhe`
