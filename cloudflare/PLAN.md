@@ -30,7 +30,8 @@ Stop typing keys on every device. Instead:
 
 ## To do
 
-1. **Optional:** connect the GitHub repo to Cloudflare Workers Builds so every push redeploys automatically. Retire the GitHub Pages copy if it's no longer wanted.
+1. **Deploy the LoRA add-ons (2026-11-17).** The LoRA picker and `worker/download-loras.sh` are committed on this branch (`8c234b5`) and tested locally, but not deployed: the Cloudflare token had already been deleted. Needs a new "Edit Cloudflare Workers" token as `CLOUDFLARE_API_TOKEN`, then `node cloudflare/build.mjs` and `npx wrangler deploy -c cloudflare/wrangler.toml` (secrets are kept), then delete the token. The user also needs to run `worker/download-loras.sh` on a temporary Pod with the network volume, with a Civitai API key in `CIVITAI_TOKEN` for the rope/cleave gag LoRA (README, Step 7). Then test both LoRAs on Z-Image Base and Turbo. If they work, consider more: shibari and chest-harness rope ties (staying away from X-rated LoRAs).
+2. **Optional:** connect the GitHub repo to Cloudflare Workers Builds so every push redeploys automatically. Retire the GitHub Pages copy if it's no longer wanted.
 
 ## Current setup (for reference)
 
