@@ -56,7 +56,8 @@ h2 { font-size: 16px; }
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px; align-self: start;
 }
-@media (min-width: 861px) { .controls { position: sticky; top: 72px; } }
+@media (min-width: 861px) { .controls { position: sticky; top: 72px; max-height: calc(100vh - 92px); overflow-y: auto; } }
+@media (max-width: 520px) { .topbar { padding: 10px 16px; } .conn { display: none; } #wake, #openSettings { padding: 7px 10px; font-size: 14px; } }
 
 label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
 label:first-child { margin-top: 0; }
@@ -123,3 +124,20 @@ dialog::backdrop { background: rgb(0 0 0 / .6); }
 .viewer-bar { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; margin-top: 12px; }
 .viewer-meta { margin: 0; font-size: 13px; color: var(--muted); flex: 1 1 300px; max-height: 6em; overflow: auto; }
 .viewer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.ref-wrap { margin-top: 8px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; }
+.ref-wrap.drag { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ref-wrap .hint:first-child { margin-top: 0; }
+.refs { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.refs:empty { display: none; }
+.ref { position: relative; width: 84px; }
+.ref img { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; display: block; border: 1px solid var(--border); }
+.ref span { display: block; font-size: 12px; color: var(--muted); text-align: center; }
+.ref button {
+  position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; padding: 0; line-height: 1;
+  border-radius: 50%; background: rgb(0 0 0 / .65); color: #fff; border: none; font-size: 15px;
+}
+.upload { font-size: 13px; padding: 6px 12px; margin: 0; font-weight: 600; }
+input[type="range"] { padding: 0; accent-color: var(--accent); }
+select:disabled { opacity: .6; }
+#wake.ready { color: var(--ok); border-color: var(--ok); }

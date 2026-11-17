@@ -21,6 +21,15 @@ Your browser (GitHub Pages site)  ──►  RunPod Serverless endpoint  ──�
 | Z-Image Turbo | Photorealism, fast iteration | 8 steps | Right away (Step 2) |
 | Z-Image Base | Maximum detail, negative prompts | 25 steps | After Step 6 |
 | Chroma1-HD | Any style (illustration, painting, photo); trained without content filtering | 26 steps | After Step 6 |
+| Qwen Image Edit 2511 | Character / scene reference mode (uses your uploaded images directly) | 4 steps | After Step 6 |
+
+**Reference image modes**
+
+| Mode | What it does | Available |
+|---|---|---|
+| Copy pose & composition | Traces the outlines of your image (bodies, poses, props, framing) and builds a new image on them | Right away |
+| Start from this image | Repaints your image; the Strength slider sets how much changes | Right away (any model) |
+| Character / scene reference | Up to 3 images, e.g. your character + a pose/setting; refer to them as "image 1", "image 2" in the prompt | After Step 6 |
 
 The app refuses prompts that reference minors. It is meant for adults and fictional adult characters only. Don't create sexual images of real, identifiable people. That is illegal in many places even when the image is fake.
 
@@ -65,20 +74,23 @@ The site's code is public, but it contains no keys or images, and it tells searc
 
 ## Step 5: Generate
 
-1. Keep **Z-Image Turbo** selected, write a prompt, and click **Generate** (or press Ctrl/Cmd + Enter).
-2. **The first image will be slow (1–3+ minutes)** while a GPU worker starts and loads the model. After that, each image takes a few seconds as long as the worker is warm.
-3. Click an image to view it full size, **Download** it, or **Reuse settings** to recreate or vary it.
+1. Click **Wake up GPU** when you sit down. It sends a tiny throwaway job so a worker starts while you write your prompt.
+2. Keep **Z-Image Turbo** selected, write a prompt, and click **Generate** (or press Ctrl/Cmd + Enter).
+3. **The very first image ever will be slow (10–20 minutes)** while RunPod downloads the worker image. After that, a start from cold takes about 30 seconds to 2 minutes, and each image takes a few seconds while the worker is warm.
+4. Click an image to view it full size, **Download** it, **Reuse settings** to recreate or vary it, or **Use as reference** to build on it.
+
+**Reference images:** choose a mode under **Reference image**, then add an image (button, drag & drop, or paste). Reference images stay saved in your browser until you remove them, so a character you've developed is there next time. They are resized to at most 1536 px before upload.
 
 **Prompt tips:** these models understand full sentences. Describe the subject, pose, clothing, setting, lighting, camera/lens or art medium, and mood. Keep the same **seed** and change one phrase at a time to refine an image.
 
 ## Step 6 (optional upgrade): Add Z-Image Base and Chroma1-HD
 
-The `worker/Dockerfile` in this repo starts from the image you used in Step 2 and adds the other two models (about 26 GB more).
+The `worker/Dockerfile` in this repo starts from the image you used in Step 2 and adds Z-Image Base, Chroma1-HD and Qwen Image Edit 2511 (about 57 GB more, ~90 GB total).
 
 1. RunPod → **Settings → Connections → GitHub** → connect your GitHub account and allow access to this repository.
 2. Open your endpoint → **Manage → Edit Endpoint** (or create a new endpoint and choose **GitHub Repo**).
 3. Repository: `jonathanmlanger/artgenerator`, Branch: `main`, **Dockerfile path: `worker/Dockerfile`**, Build context: `worker`.
-4. Raise **Container disk** to `80 GB`, then deploy. RunPod builds the image itself, which can take 30–60 minutes. The **Builds** tab shows progress.
+4. Raise **Container disk** to `120 GB`. Add a **48 GB GPU** type (e.g. L40S / A6000) as your first choice: the character reference mode needs it to run well. Then deploy. RunPod builds the image itself, which can take 30–60 minutes. The **Builds** tab shows progress.
 5. If you created a new endpoint, put its new Endpoint ID in the app's Settings.
 
 RunPod may rebuild when this repository changes, depending on how the GitHub integration is set up. Check the **Builds** tab after pushing website-only changes. If unwanted rebuilds happen, move `worker/` into its own repository.
@@ -98,6 +110,8 @@ RunPod bills per second while a worker runs, including startup and idle-timeout 
 | Waiting for a GPU worker for many minutes | The first start downloads the image. Check the endpoint's **Workers/Logs** tabs. Add more GPU types if none are available. |
 | "The worker doesn't have this model installed" | You chose Z-Image Base or Chroma before finishing Step 6. |
 | "The GPU ran out of memory" | Generate fewer images at once, or add a 48 GB GPU type. |
+| "Request too large" when using references | Use fewer or smaller reference images. RunPod limits a job to 10 MB. |
+| Pose mode copies too much detail (clothing, background) | Lower Strength to 0.5–0.7, or crop the reference to just the figures. |
 | Images vanished | They're stored per browser. Clearing site data or using private browsing removes them. Download images you want to keep. |
 
 ## Files

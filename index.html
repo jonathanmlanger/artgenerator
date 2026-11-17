@@ -12,6 +12,7 @@
     <h1>Image Studio</h1>
     <div class="topbar-right">
       <span id="conn" class="conn" title="Connection status">Not connected</span>
+      <button id="wake" class="ghost" title="Start a GPU worker now so your first image is fast">Wake up GPU</button>
       <button id="openSettings" class="ghost">Settings</button>
     </div>
   </header>
@@ -28,6 +29,21 @@
       <div id="negWrap">
         <label for="negative">Negative prompt <span class="hint-inline">(what to avoid)</span></label>
         <textarea id="negative" rows="3"></textarea>
+      </div>
+
+      <label for="refMode">Reference image</label>
+      <select id="refMode"></select>
+      <div id="refWrap" class="ref-wrap" hidden>
+        <p id="refNote" class="hint"></p>
+        <div id="refList" class="refs"></div>
+        <label id="refAdd" class="button ghost upload">Add image
+          <input id="refFile" type="file" accept="image/*" multiple hidden>
+        </label>
+        <span class="hint-inline">or drag &amp; drop / paste</span>
+        <div id="strengthWrap">
+          <label for="refStrength">Strength <span id="strengthVal" class="hint-inline"></span></label>
+          <input id="refStrength" type="range" min="0.1" max="1" step="0.05">
+        </div>
       </div>
 
       <label>Aspect ratio</label>
@@ -92,12 +108,24 @@
     </form>
   </dialog>
 
+  <dialog id="refConsent">
+    <form method="dialog">
+      <h2>Before you upload</h2>
+      <p>Reference images must show only adults (or clearly adult fictional characters). Don't upload photos of real people to make sexual or nude images of them without their consent; in many places that is illegal even if the result is fake.</p>
+      <div class="dialog-actions">
+        <button value="no" class="ghost">Cancel</button>
+        <button value="yes" class="primary">I understand</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="viewer" class="viewer">
     <img id="viewerImg" alt="">
     <div class="viewer-bar">
       <p id="viewerMeta" class="viewer-meta"></p>
       <div class="viewer-actions">
         <button id="vReuse" class="ghost">Reuse settings</button>
+        <button id="vUseRef" class="ghost">Use as reference</button>
         <a id="vDownload" class="button ghost" download>Download</a>
         <button id="vDelete" class="ghost danger">Delete</button>
         <button id="vClose" class="primary">Close</button>
