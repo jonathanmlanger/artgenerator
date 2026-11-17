@@ -331,6 +331,61 @@ function applyModel(resetAdvanced) {
     $("steps").value = m.defaults.steps;
     $("cfg").value = m.defaults.cfg;
   }
+  renderLoras();
+}
+
+// ---------- LoRA add-ons ----------
+// Saved per browser as { [loraId]: { on, strength } }.
+function loraState() {
+  try { return JSON.parse(store.get("ui_loras") || "{}") || {}; } catch { return {}; }
+}
+function saveLoraState(st) { store.set("ui_loras", JSON.stringify(st), true); }
+function loraSettings(id, st = loraState()) {
+  const l = LORAS[id];
+  return { on: !!st[id]?.on, strength: clampNum(st[id]?.strength, 0.05, 1.5, l.strength) };
+}
+// The ticked LoRAs that work with this model, as { id, label, file, strength }.
+function activeLoras(modelId) {
+  const st = loraState();
+  return Object.entries(LORAS)
+    .filter(([id, l]) => l.models.includes(modelId) && loraSettings(id, st).on)
+    .map(([id, l]) => ({ id, label: l.label, file: l.file, strength: loraSettings(id, st).strength }));
+}
+function renderLoras() {
+  const modelId = effectiveModelId();
+  const list = $("loraList");
+  list.textContent = "";
+  const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
+  $("loraWrap").hidden = !usable.length;
+  for (const [id, l] of usable) {
+    const cur = loraSettings(id);
+    const row = document.createElement("div");
+    row.className = "lora-row";
+    const lab = document.createElement("label");
+    lab.className = "lora-name";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = cur.on;
+    lab.append(cb, " " + l.label);
+    const num = document.createElement("input");
+    num.type = "number"; num.min = "0.05"; num.max = "1.5"; num.step = "0.05";
+    num.value = cur.strength;
+    num.setAttribute("aria-label", `${l.label} strength`);
+    num.disabled = !cur.on;
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = l.note;
+    const update = () => {
+      const st = loraState();
+      st[id] = { on: cb.checked, strength: clampNum(num.value, 0.05, 1.5, l.strength) };
+      saveLoraState(st);
+      num.disabled = !cb.checked;
+    };
+    cb.addEventListener("change", update);
+    num.addEventListener("change", update);
+    row.append(lab, num, note);
+    list.append(row);
+  }
 }
 
 function setStatus(msg, isError = false) {
@@ -368,6 +423,7 @@ function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("r
     refCount: useRefs.length,
     refStrength: rmode.strength == null ? null : clampNum(strengthValue, 0.05, 1, rmode.strength),
     refNames: useRefs.map((r) => `studio_ref_${r.id}.jpg`),
+    loras: activeLoras(modelId),
   };
   return { settings, useRefs };
 }
@@ -376,7 +432,7 @@ function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("r
 async function executeGeneration(settings, useRefs, onStatus) {
   const started = Date.now();
   onStatus(useRefs.length ? "Uploading reference images and sending job…" : "Sending job to RunPod…");
-  const workflow = applyReference(MODELS[settings.model].build(settings), settings);
+  const workflow = applyLoras(applyReference(MODELS[settings.model].build(settings), settings), settings.loras);
   const input = { workflow };
   if (useRefs.length) input.images = useRefs.map((r, i) => ({ name: settings.refNames[i], image: r.dataUrl }));
   const result = await runJob(input, (st, secs) => {
@@ -396,7 +452,8 @@ async function executeGeneration(settings, useRefs, onStatus) {
   }
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   const exec = result.executionTime ? ` (GPU time ${(result.executionTime / 1000).toFixed(1)}s)` : "";
-  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.` };
+  const loraText = settings.loras?.length ? ` LoRA: ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.` : "";
+  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}` };
 }
 
 async function generate() {
@@ -473,6 +530,10 @@ async function cancel() {
 function describeFailure(r) {
   const err = r.error || r.output?.error || "";
   const msg = typeof err === "string" ? err : JSON.stringify(err);
+  const missingLora = Object.values(LORAS).find((l) => msg.includes(l.file));
+  if (missingLora && /not in list|value_not_in_list|lora_name/i.test(msg)) {
+    return `The worker doesn't have the “${missingLora.label}” LoRA installed. Run worker/download-loras.sh on a Pod with the network volume attached (see the guide), or untick it.\n\nDetails: ` + msg.slice(0, 300);
+  }
   if (/not in list|value_not_in_list|unet_name|clip_name|lora_name|model_patch/i.test(msg)) {
     return "The worker doesn't have this model installed. If you picked a model marked “after upgrade”, finish Step 6 of the guide first.\n\nDetails: " + msg.slice(0, 400);
   }
@@ -559,6 +620,16 @@ function reuse(item) {
   $("steps").value = s.steps;
   $("cfg").value = s.cfg;
   $("count").value = "1";
+  if (Array.isArray(s.loras)) {
+    const st = loraState();
+    for (const id of Object.keys(LORAS)) {
+      if (!LORAS[id].models.includes(s.model)) continue;
+      const used = s.loras.find((l) => l.id === id);
+      st[id] = { on: !!used, strength: used ? used.strength : loraSettings(id, st).strength };
+    }
+    saveLoraState(st);
+    renderLoras();
+  }
   setStatus("Settings loaded. Keep the seed to recreate this image, or clear it for a new variation." +
     (s.refMode && s.refMode !== "none" ? " Reference images aren't saved with gallery images; check the ones shown are the ones you want." : ""));
 }

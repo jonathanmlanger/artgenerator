@@ -130,6 +130,20 @@ The **Library** tab stores terms the models struggle with. Each entry has the te
 
 If a concept still doesn't come out right with a good description and example, it's a candidate for training a LoRA (a small add-on that teaches the model the concept permanently).
 
+**LoRA add-ons.** A LoRA is a small file that teaches a model a concept (a pose, a prop, a style). The app lists the ones it knows about under **Model → LoRA add-ons**; tick one to use it and set its strength (0.5–1.0 is typical; lower it if images look overcooked). Only LoRAs that work with the selected model are shown, and using more than two at once tends to lower quality. The current list (in `workflows.js`, `LORAS`) is for Z-Image Base and Turbo.
+
+To install them, follow 6b with a different command. One file needs a free Civitai account: create an API key at civitai.com → **Account settings → API Keys**, then in the Pod's terminal run (the leading space keeps the key out of the shell history):
+
+```bash
+ export CIVITAI_TOKEN=your_key_here
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonathanmlanger/artgenerator/wip-cloudflare-server/worker/download-loras.sh | bash
+```
+
+It checks each file's checksum and ends with **"Done. You can now TERMINATE this Pod"**. Terminate the Pod, then delete the Civitai key if you won't need it again. If the app says a LoRA isn't installed, run the command again.
+
 ## Step 8 (optional): Cloud sync with Cloudflare R2
 
 By default everything (gallery, chats, reference images, library) is stored only in your browser. Cloud sync keeps a copy in your private Cloudflare R2 bucket so it appears on every device you connect.
@@ -166,3 +180,4 @@ RunPod bills per second while a worker runs, including startup and idle-timeout 
 - `workflows.js` — the ComfyUI workflows for each model (based on ComfyUI's official templates)
 - `cloud.js` — the Cloudflare R2 (S3-compatible) client used for cloud sync
 - `worker/download-models.sh` — downloads the Step 6 models onto your network volume
+- `worker/download-loras.sh` — downloads the LoRA add-ons onto your network volume

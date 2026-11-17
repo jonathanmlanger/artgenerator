@@ -139,6 +139,14 @@ dialog::backdrop { background: rgb(0 0 0 / .6); }
 }
 .upload { font-size: 13px; padding: 6px 12px; margin: 0; font-weight: 600; }
 input[type="range"] { padding: 0; accent-color: var(--accent); }
+.lora-wrap { margin-top: 4px; }
+.lora-row { display: grid; grid-template-columns: 1fr 76px; gap: 4px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+.lora-row:first-child { border-top: none; padding-top: 0; }
+.lora-row .lora-name { display: flex; gap: 8px; align-items: center; margin: 0; font-weight: 600; cursor: pointer; }
+.lora-row .lora-name input { width: auto; margin: 0; }
+.lora-row input[type="number"] { padding: 5px 8px; }
+.lora-row input:disabled { opacity: .5; }
+.lora-row .hint { grid-column: 1 / -1; margin: 0; }
 select:disabled { opacity: .6; }
 #wake.ready { color: var(--ok); border-color: var(--ok); }
 

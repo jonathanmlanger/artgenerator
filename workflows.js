@@ -152,6 +152,48 @@ function applyReference(g, s) {
   return g;
 }
 
+// LoRA add-ons: small files that teach a model a concept (a pose, prop or style).
+// Files live in models/loras on the network volume; worker/download-loras.sh downloads them.
+// models: the MODELS ids each LoRA works with. Only one of those can use it.
+const LORAS = {
+  "rope-cleave": {
+    label: "Rope bondage + cleave gag",
+    file: "rope_cleave_gag_zib.safetensors",
+    models: ["z-image-base", "z-image-turbo"],
+    strength: 0.8,
+    note: "Ropework (chest harness, wrists, ankles, arms behind the back) and cloth cleave gags. Describe the ropes, colours and position in plain sentences. Made for Z-Image Base; also works on Turbo.",
+    source: "https://civitai.com/models/2532774",
+  },
+  "ball-gag": {
+    label: "Ball gag",
+    file: "ball_gag_zit.safetensors",
+    models: ["z-image-turbo", "z-image-base"],
+    strength: 0.8,
+    note: "Include “gagged with a ball gag” in the prompt; you can name a colour. Made for Z-Image Turbo.",
+    source: "https://civitai.com/models/999177",
+  },
+};
+
+// Chains LoRA loaders onto the diffusion model (node "1") and points everything that used it at the last one.
+// loras: [{ file, strength }]
+function applyLoras(g, loras) {
+  if (!loras?.length) return g;
+  const ids = new Set();
+  let prev = ["1", 0];
+  loras.forEach((l, i) => {
+    const id = String(40 + i);
+    ids.add(id);
+    g[id] = { class_type: "LoraLoaderModelOnly", inputs: { model: prev, lora_name: l.file, strength_model: l.strength } };
+    prev = [id, 0];
+  });
+  for (const [id, node] of Object.entries(g)) {
+    if (ids.has(id)) continue;
+    const m = node.inputs.model;
+    if (Array.isArray(m) && m[0] === "1" && m[1] === 0) node.inputs.model = prev;
+  }
+  return g;
+}
+
 // A tiny job that only exists to start a GPU worker and load the model.
 function warmupWorkflow() {
   // The small 256px result is returned but the app discards it.
