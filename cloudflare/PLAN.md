@@ -45,19 +45,14 @@ Stop typing keys on every device. Instead:
   - settings and password-change endpoints
 - `cloudflare/login.html`: the sign-in page.
 - `cloudflare/build.mjs`: bundles the app files into `cloudflare/dist/worker.js`.
+- **App "server mode"** (`app.js`, `cloud.js`, `index.html`): detects `/api/config` at startup, then routes RunPod calls through `/api/runpod/...` and storage through `/api/files`, saves RunPod settings with `PUT /api/config`, hides the browser-key fields, and adds **Change password** and **Sign out**. The GitHub Pages version is unchanged.
+- **Tested locally** with Miniflare (mock R2, mocked RunPod) and Playwright: login, proxy, edit-endpoint routing, file API, sync, `_config/` hidden, password change signing out other devices, sign out. All passed.
+- **Partly deployed (2026-11-17):** a script named `image-studio` with the `BUCKET` binding was uploaded, but it has **no secrets and no address yet**, so it can't be reached. That upload also included some unused files from the build folder; redeploy from a folder holding only `dist/worker.js`.
 
 ## To do
 
-1. **App "server mode"** (`app.js`, `cloud.js`, `index.html`):
-   - At startup, detect `/api/config`.
-   - When it's present:
-     - route RunPod calls through `/api/runpod/...` and storage through `/api/files`
-     - hide the browser-key fields in Settings
-     - add **Change password** and **Sign out**
-     - save RunPod settings with `PUT /api/config`
-   - The GitHub Pages version keeps working as it does now.
-2. **Test locally** with miniflare, using a mock R2 bucket.
-3. **Deploy.** Needs a Cloudflare API token from the user, created from the **"Edit Cloudflare Workers"** template.
+3. **Finish deploying.**
+   - The account has **no workers.dev subdomain yet**. Either open Workers & Pages in the dashboard once (it creates one automatically), or choose a name and create it via the API. Needs a Cloudflare API token from the user, created from the **"Edit Cloudflare Workers"** template.
    - Upload the script with the R2 binding `BUCKET` = `image-studio`, plus the secrets `SESSION_SECRET` and `PASSWORD_HASH`.
    - Enable the workers.dev address.
    - Give the user the generated password.
