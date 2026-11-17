@@ -79,7 +79,11 @@ The site's code is public, but it contains no keys or images, and it tells searc
 3. **The very first image ever will be slow (10–20 minutes)** while RunPod downloads the worker image. After that, a start from cold takes about 30 seconds to 2 minutes, and each image takes a few seconds while the worker is warm.
 4. Click an image to view it full size, **Download** it, **Reuse settings** to recreate or vary it, or **Use as reference** to build on it.
 
-**Reference images:** choose a mode under **Reference image**, then add an image (button, drag & drop, or paste). Reference images stay saved in your browser until you remove them, so a character you've developed is there next time. They are resized to at most 1536 px before upload.
+**Chat (the default view):** works like a chat with a multimodal assistant. Paste (Ctrl/Cmd + V), drop, or attach (**+**) an image, type what you want, and press **Enter** (Shift + Enter for a new line). A menu above the message box picks what to do with the image (copy pose, start from it, or character reference). Click **Edit** under any result to attach it to your next message and keep refining. The left panel still controls the model, aspect ratio, number of images and strength. **New chat** clears the conversation; images stay in the Gallery.
+
+**Gallery tab:** shows every image, plus the classic prompt box and reference uploader.
+
+**Reference images (Gallery tab):** choose a mode under **Reference image**, then add an image (button, drag & drop, or paste). Reference images stay saved in your browser until you remove them, so a character you've developed is there next time. They are resized to at most 1536 px before upload.
 
 **Prompt tips:** these models understand full sentences. Describe the subject, pose, clothing, setting, lighting, camera/lens or art medium, and mood. Keep the same **seed** and change one phrase at a time to refine an image.
 

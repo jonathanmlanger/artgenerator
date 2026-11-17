@@ -23,14 +23,17 @@
       <select id="model"></select>
       <p id="modelNote" class="hint"></p>
 
-      <label for="prompt">Prompt</label>
-      <textarea id="prompt" rows="6" placeholder="Describe the image in full sentences: subject, setting, lighting, camera or art style…"></textarea>
+      <div class="studio-only">
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" rows="6" placeholder="Describe the image in full sentences: subject, setting, lighting, camera or art style…"></textarea>
+      </div>
 
       <div id="negWrap">
         <label for="negative">Negative prompt <span class="hint-inline">(what to avoid)</span></label>
         <textarea id="negative" rows="3"></textarea>
       </div>
 
+      <div class="studio-only">
       <label for="refMode">Reference image</label>
       <select id="refMode"></select>
       <div id="refWrap" class="ref-wrap" hidden>
@@ -44,6 +47,12 @@
           <label for="refStrength">Strength <span id="strengthVal" class="hint-inline"></span></label>
           <input id="refStrength" type="range" min="0.1" max="1" step="0.05">
         </div>
+      </div>
+      </div>
+      <div class="chat-only">
+        <label for="chatStrength">Reference strength <span id="chatStrengthVal" class="hint-inline"></span></label>
+        <input id="chatStrength" type="range" min="0.1" max="1" step="0.05">
+        <p class="hint">Used when a chat message has an image attached, in “Copy pose” and “Start from image” modes.</p>
       </div>
 
       <label>Aspect ratio</label>
@@ -75,18 +84,49 @@
         <button id="resetAdvanced" class="ghost small">Reset to model defaults</button>
       </details>
 
-      <button id="generate" class="primary">Generate</button>
-      <button id="cancel" class="ghost" hidden>Cancel</button>
+      <div class="studio-only">
+        <button id="generate" class="primary">Generate</button>
+        <button id="cancel" class="ghost" hidden>Cancel</button>
+      </div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="gallery-wrap" aria-label="Your images">
-      <div class="gallery-head">
-        <h2>Gallery</h2>
+    <section class="main-area">
+      <div class="tabs">
+        <div class="tablist" role="tablist">
+          <button id="tabChat" role="tab" aria-controls="chatView">Chat</button>
+          <button id="tabGallery" role="tab" aria-controls="galleryView">Gallery</button>
+        </div>
         <span class="hint">Saved only in this browser</span>
+        <button id="newChat" class="ghost small chat-only">New chat</button>
       </div>
-      <div id="gallery" class="gallery"></div>
-      <p id="empty" class="empty">Your images will appear here.</p>
+
+      <div id="chatView" class="chat" role="tabpanel" aria-labelledby="tabChat">
+        <div id="thread" class="thread">
+          <div id="chatEmpty" class="chat-empty">
+            <p><strong>Paste or drop an image, describe what you want, press Enter.</strong></p>
+            <p>No image? Just describe one. Click <em>Edit</em> under any result to keep working on it.</p>
+          </div>
+        </div>
+        <form id="composer" class="composer">
+          <div id="attachRow" class="attach-row" hidden>
+            <div id="attachList" class="refs"></div>
+            <select id="chatRefMode" aria-label="What to do with the attached image"></select>
+          </div>
+          <div class="composer-row">
+            <label class="icon-btn" title="Attach image" aria-label="Attach image">+
+              <input id="chatFile" type="file" accept="image/*" multiple hidden>
+            </label>
+            <textarea id="chatInput" rows="1" placeholder="Describe an image, or paste one in…" title="Enter to send, Shift+Enter for a new line"></textarea>
+            <button id="chatSend" class="primary" type="submit">Send</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="galleryView" role="tabpanel" aria-labelledby="tabGallery" hidden>
+        <div id="gallery" class="gallery"></div>
+        <p id="empty" class="empty">Your images will appear here.</p>
+      </div>
     </section>
   </main>
 

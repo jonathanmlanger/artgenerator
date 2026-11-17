@@ -48,11 +48,12 @@ let _idb = null;
 async function idb() {
   if (_idb) return _idb;
   _idb = await new Promise((resolve, reject) => {
-    const req = indexedDB.open("image-studio", 2);
+    const req = indexedDB.open("image-studio", 3);
     req.onupgradeneeded = () => {
       const d = req.result;
       if (!d.objectStoreNames.contains("images")) d.createObjectStore("images", { keyPath: "id" });
       if (!d.objectStoreNames.contains("refs")) d.createObjectStore("refs", { keyPath: "id" });
+      if (!d.objectStoreNames.contains("chat")) d.createObjectStore("chat", { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -73,10 +74,12 @@ function makeStore(name) {
     add: (item) => tx("readwrite", (s) => s.put(item)),
     remove: (id) => tx("readwrite", (s) => s.delete(id)),
     all: () => tx("readonly", (s) => s.getAll()),
+    clear: () => tx("readwrite", (s) => s.clear()),
   };
 }
 const db = makeStore("images");
 const refDb = makeStore("refs");
+const chatDb = makeStore("chat");
 
 // ---------- UI state ----------
 let size = "1:1";
@@ -84,8 +87,11 @@ let currentJob = null;
 let urls = new Map(); // image id -> object URL
 let refs = []; // [{ id, dataUrl, added }]
 
+let view = "chat";
 function refMode() { return $("refMode").value; }
-function effectiveModelId() { return REF_MODES[refMode()]?.model || $("model").value; }
+// In chat view the panel's own reference mode is not used, so the model picker is always free.
+function panelMode() { return view === "chat" ? "none" : refMode(); }
+function effectiveModelId() { return REF_MODES[panelMode()]?.model || $("model").value; }
 
 function initControls() {
   const modelSel = $("model");
@@ -134,7 +140,7 @@ function applyRefMode(changed) {
   const r = REF_MODES[refMode()];
   const on = refMode() !== "none";
   $("refWrap").hidden = !on;
-  $("model").disabled = !!r.model;
+  $("model").disabled = !!REF_MODES[panelMode()].model;
   if (on) {
     $("refNote").textContent = r.note;
     $("strengthWrap").hidden = r.strength == null;
@@ -156,7 +162,7 @@ function setSize(k) {
 }
 
 function applyModel(resetAdvanced) {
-  const forced = REF_MODES[refMode()]?.model;
+  const forced = REF_MODES[panelMode()]?.model;
   const m = MODELS[effectiveModelId()];
   $("modelNote").textContent = forced ? `This mode uses ${m.label.split(" —")[0]}. ${m.needsUpgrade ? "Requires the Step 6 upgrade." : ""}` : m.note;
   $("negWrap").hidden = !m.supportsNegative;
@@ -172,20 +178,19 @@ function setStatus(msg, isError = false) {
 }
 
 // ---------- Generation ----------
-async function generate() {
-  const modelId = effectiveModelId();
-  const m = MODELS[modelId];
-  const mode = refMode();
+// Builds the job settings from the left panel plus a prompt and reference images.
+// Throws an Error with a user-facing message if something is missing.
+function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("refStrength").value) {
   const rmode = REF_MODES[mode];
-  const prompt = $("prompt").value.trim();
-  if (!prompt) return setStatus("Write a prompt first.", true);
-  const useRefs = mode === "none" ? [] : refs.slice(0, rmode.maxImages);
-  if (mode !== "none" && !useRefs.length) return setStatus("Add a reference image, or set Reference image to “No reference image”.", true);
-
+  const modelId = rmode.model || $("model").value;
+  const m = MODELS[modelId];
+  // If this mode uses a different model than the one the panel shows, use that model's own steps/CFG.
+  const own = modelId === effectiveModelId();
+  if (!prompt) throw new Error("Write a prompt first.");
+  const useRefs = mode === "none" ? [] : refList.slice(0, rmode.maxImages);
+  if (mode !== "none" && !useRefs.length) throw new Error("Add a reference image, or set Reference image to “No reference image”.");
   const flagged = checkPrompt(prompt);
-  if (flagged) {
-    return setStatus(`This studio only creates images of adults. Remove "${flagged}" from the prompt.`, true);
-  }
+  if (flagged) throw new Error(`This studio only creates images of adults. Remove "${flagged}" from the prompt.`);
 
   const [width, height] = SIZES[size];
   const seedInput = $("seed").value.trim();
@@ -195,43 +200,55 @@ async function generate() {
     negative: m.supportsNegative ? $("negative").value.trim() : "",
     width, height,
     count: Number($("count").value),
-    steps: clampInt($("steps").value, 1, 80, m.defaults.steps),
-    cfg: clampNum($("cfg").value, 1, 15, m.defaults.cfg),
+    steps: own ? clampInt($("steps").value, 1, 80, m.defaults.steps) : m.defaults.steps,
+    cfg: own ? clampNum($("cfg").value, 1, 15, m.defaults.cfg) : m.defaults.cfg,
     seed: seedInput ? Number(seedInput) : Math.floor(Math.random() * 2 ** 48),
     refMode: mode,
     refCount: useRefs.length,
-    refStrength: rmode.strength == null ? null : clampNum($("refStrength").value, 0.05, 1, rmode.strength),
+    refStrength: rmode.strength == null ? null : clampNum(strengthValue, 0.05, 1, rmode.strength),
     refNames: useRefs.map((r) => `studio_ref_${r.id}.jpg`),
   };
+  return { settings, useRefs };
+}
 
-  setBusy(true);
-  const placeholders = addPlaceholders(settings.count, width / height);
+// Runs a generation and saves the results to the gallery. Returns { items, summary }.
+async function executeGeneration(settings, useRefs, onStatus) {
   const started = Date.now();
+  onStatus(useRefs.length ? "Uploading reference images and sending job…" : "Sending job to RunPod…");
+  const workflow = applyReference(MODELS[settings.model].build(settings), settings);
+  const input = { workflow };
+  if (useRefs.length) input.images = useRefs.map((r, i) => ({ name: settings.refNames[i], image: r.dataUrl }));
+  const result = await runJob(input, (st, secs) => {
+    if (st === "IN_QUEUE") {
+      onStatus(`Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take 1–3 minutes while the worker boots and loads the model. Tip: press “Wake up GPU” when you sit down.)`);
+    } else onStatus(`Generating… ${secs}s`);
+  });
+  if (result.status !== "COMPLETED") throw new Error(describeFailure(result));
+  const images = extractImages(result.output);
+  if (!images.length) throw new Error("The job finished but returned no images. " + JSON.stringify(result.output).slice(0, 300));
+
+  const items = [];
+  for (const [i, b64] of images.entries()) {
+    const item = { id: `${Date.now()}-${i}`, created: Date.now(), blob: b64ToBlob(b64), settings: { ...settings, index: i } };
+    await db.add(item);
+    items.push(item);
+  }
+  const secs = ((Date.now() - started) / 1000).toFixed(0);
+  const exec = result.executionTime ? ` (GPU time ${(result.executionTime / 1000).toFixed(1)}s)` : "";
+  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.` };
+}
+
+async function generate() {
+  if (currentJob || busy) return;
+  let prep;
+  try { prep = prepareSettings($("prompt").value.trim(), refs); }
+  catch (e) { return setStatus(e.message, true); }
+  const { settings, useRefs } = prep;
+  setBusy(true);
+  const placeholders = addPlaceholders(settings.count, settings.width / settings.height);
   try {
-    setStatus(useRefs.length ? "Uploading reference images and sending job…" : "Sending job to RunPod…");
-    const workflow = applyReference(m.build(settings), settings);
-    const input = { workflow };
-    if (useRefs.length) input.images = useRefs.map((r, i) => ({ name: settings.refNames[i], image: r.dataUrl }));
-    const result = await runJob(input, (st, secs) => {
-      if (st === "IN_QUEUE") {
-        setStatus(`Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take 1–3 minutes while the worker boots and loads the model. Tip: press “Wake up GPU” when you sit down.)`);
-      } else setStatus(`Generating… ${secs}s`);
-    });
-
-    if (result.status !== "COMPLETED") {
-      throw new Error(describeFailure(result));
-    }
-    const images = extractImages(result.output);
-    if (!images.length) throw new Error("The job finished but returned no images. " + JSON.stringify(result.output).slice(0, 300));
-
-    for (const [i, b64] of images.entries()) {
-      const blob = b64ToBlob(b64);
-      const item = { id: `${Date.now()}-${i}`, created: Date.now(), blob, settings: { ...settings, index: i } };
-      await db.add(item);
-    }
-    const secs = ((Date.now() - started) / 1000).toFixed(0);
-    const exec = result.executionTime ? ` (GPU time ${(result.executionTime / 1000).toFixed(1)}s)` : "";
-    setStatus(`Done in ${secs}s${exec}. Seed ${settings.seed}.`);
+    const { summary } = await executeGeneration(settings, useRefs, (m) => setStatus(m));
+    setStatus(summary);
   } catch (e) {
     setStatus(e.message || String(e), true);
   } finally {
@@ -368,6 +385,7 @@ function reuse(item) {
   applyRefMode(false);
   if (s.refStrength != null) { $("refStrength").value = s.refStrength; $("strengthVal").textContent = Number(s.refStrength).toFixed(2); }
   $("prompt").value = s.prompt; store.set("ui_prompt", s.prompt, true);
+  if (view === "chat") { $("chatInput").value = s.prompt; $("chatInput").dispatchEvent(new Event("input")); }
   if (s.negative) { $("negative").value = s.negative; store.set("ui_negative", s.negative, true); }
   const sizeKey = Object.keys(SIZES).find((k) => SIZES[k][0] === s.width && SIZES[k][1] === s.height);
   if (sizeKey) setSize(sizeKey);
@@ -462,6 +480,11 @@ function initRefs() {
   wrap.addEventListener("dragleave", () => wrap.classList.remove("drag"));
   wrap.addEventListener("drop", (e) => { e.preventDefault(); wrap.classList.remove("drag"); addRefs(e.dataTransfer.files); });
   document.addEventListener("paste", (e) => {
+    if (view === "chat") {
+      const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+      if (files.length) { e.preventDefault(); addChatAttachments(files); }
+      return;
+    }
     if (refMode() === "none") return;
     const files = [...(e.clipboardData?.files || [])];
     if (files.length) { e.preventDefault(); addRefs(files); }
@@ -470,6 +493,7 @@ function initRefs() {
 }
 
 async function useAsReference(item) {
+  if (view === "chat") return editInChat(item);
   if (refMode() === "none") {
     $("refMode").value = "pose";
     store.set("ui_refmode", "pose", true);
@@ -478,6 +502,273 @@ async function useAsReference(item) {
   if (!(await askConsent())) return;
   await addRefs([new File([item.blob], "gallery.png", { type: "image/png" })]);
   setStatus("Added to reference images. Pick the reference mode you want above.");
+}
+
+// ---------- Chat ----------
+// Messages: { id, created, role: "user" | "assistant", text, attachments: [dataUrl], mode, imageIds: [], error, summary }
+let messages = [];
+let chatAttach = []; // [{ id, dataUrl }]
+let pending = null; // { status } while a chat job runs
+
+function setView(v) {
+  view = v === "studio" ? "studio" : "chat";
+  store.set("ui_view", view, true);
+  document.body.dataset.view = view;
+  $("tabChat").setAttribute("aria-selected", String(view === "chat"));
+  $("tabGallery").setAttribute("aria-selected", String(view === "studio"));
+  $("chatView").hidden = view !== "chat";
+  $("galleryView").hidden = view !== "studio";
+  applyRefMode(false);
+  if (view === "chat") scrollThread();
+}
+
+function initChat() {
+  const cm = $("chatRefMode");
+  for (const [id, r] of Object.entries(REF_MODES)) {
+    if (id === "none") continue;
+    const o = document.createElement("option");
+    o.value = id;
+    o.textContent = r.label + (r.needsUpgrade ? " (after upgrade)" : "");
+    cm.append(o);
+  }
+  cm.value = REF_MODES[store.get("ui_chatmode")] && store.get("ui_chatmode") !== "none" ? store.get("ui_chatmode") : "pose";
+  cm.addEventListener("change", () => { store.set("ui_chatmode", cm.value, true); renderAttachments(); });
+
+  const cs = $("chatStrength");
+  cs.value = store.get("ui_chatstrength") || "0.7";
+  const showStrength = () => { $("chatStrengthVal").textContent = Number(cs.value).toFixed(2); };
+  cs.addEventListener("input", () => { store.set("ui_chatstrength", cs.value, true); showStrength(); });
+  showStrength();
+
+  $("tabChat").addEventListener("click", () => setView("chat"));
+  $("tabGallery").addEventListener("click", () => setView("studio"));
+  $("newChat").addEventListener("click", async () => {
+    if (pending) return;
+    if (messages.length && !confirm("Start a new chat? Your images stay in the Gallery.")) return;
+    await chatDb.clear();
+    messages = [];
+    renderThread();
+  });
+
+  const input = $("chatInput");
+  const grow = () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 200) + "px"; };
+  input.addEventListener("input", grow);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat(); }
+  });
+  $("composer").addEventListener("submit", (e) => { e.preventDefault(); pending ? cancel() : sendChat(); });
+  $("chatFile").addEventListener("change", (e) => { addChatAttachments(e.target.files); e.target.value = ""; });
+
+  const chat = $("chatView");
+  chat.addEventListener("dragover", (e) => { e.preventDefault(); $("composer").classList.add("drag"); });
+  chat.addEventListener("dragleave", (e) => { if (!chat.contains(e.relatedTarget)) $("composer").classList.remove("drag"); });
+  chat.addEventListener("drop", (e) => { e.preventDefault(); $("composer").classList.remove("drag"); addChatAttachments(e.dataTransfer.files); });
+
+  chatDb.all().then((all) => { messages = all.sort((a, b) => a.created - b.created); renderThread(); }).catch(() => renderThread());
+}
+
+async function addChatAttachments(files) {
+  files = [...files].filter((f) => f.type.startsWith("image/"));
+  if (!files.length) return;
+  if (!(await askConsent())) return;
+  for (const f of files) {
+    try { chatAttach.push({ id: `${Date.now()}${Math.floor(Math.random() * 1000)}`, dataUrl: await prepareImage(f) }); }
+    catch { setStatus("Couldn't read that image. Try a JPG or PNG.", true); }
+  }
+  chatAttach = chatAttach.slice(-3);
+  renderAttachments();
+  $("chatInput").focus();
+}
+
+function renderAttachments() {
+  const list = $("attachList");
+  list.textContent = "";
+  $("attachRow").hidden = !chatAttach.length;
+  const max = REF_MODES[$("chatRefMode").value].maxImages;
+  chatAttach.forEach((a, i) => {
+    const d = document.createElement("div");
+    d.className = "ref";
+    d.style.opacity = i < max ? "1" : ".35";
+    d.title = i < max ? (max > 1 ? `image ${i + 1}` : "reference") : "Not used in this mode (it takes 1 image)";
+    const img = document.createElement("img");
+    img.src = a.dataUrl;
+    img.alt = `Attached image ${i + 1}`;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.setAttribute("aria-label", `Remove attached image ${i + 1}`);
+    x.addEventListener("click", () => { chatAttach = chatAttach.filter((y) => y !== a); renderAttachments(); });
+    d.append(img, x);
+    list.append(d);
+  });
+}
+
+async function sendChat(retryOf) {
+  if (pending || busy) return;
+  const text = retryOf ? retryOf.text : $("chatInput").value.trim();
+  const atts = retryOf ? retryOf.attachments.map((dataUrl, i) => ({ id: `${retryOf.id}${i}`, dataUrl })) : chatAttach.slice();
+  const mode = retryOf ? retryOf.mode : (atts.length ? $("chatRefMode").value : "none");
+  if (!text) { $("chatInput").focus(); return; }
+
+  let prep;
+  try { prep = prepareSettings(text, atts, mode, $("chatStrength").value); }
+  catch (e) {
+    messages.push({ id: `e${Date.now()}`, created: Date.now(), role: "assistant", error: e.message, local: true });
+    return renderThread();
+  }
+
+  let userMsg = retryOf;
+  if (!retryOf) {
+    userMsg = { id: `u${Date.now()}`, created: Date.now(), role: "user", text, mode,
+      attachments: prep.useRefs.map((r) => r.dataUrl) };
+    messages.push(userMsg);
+    await chatDb.add(userMsg);
+    $("chatInput").value = "";
+    $("chatInput").style.height = "";
+    chatAttach = [];
+    renderAttachments();
+  }
+
+  pending = { status: "Sending…" };
+  setBusy(true);
+  renderThread();
+  const reply = { id: `a${Date.now()}`, created: Date.now(), role: "assistant", replyTo: userMsg.id };
+  try {
+    const { items, summary } = await executeGeneration(prep.settings, prep.useRefs, (m) => {
+      pending.status = m;
+      const el = document.getElementById("pendingStatus");
+      if (el) el.textContent = m;
+    });
+    reply.imageIds = items.map((i) => i.id);
+    reply.summary = `${MODELS[prep.settings.model].label.split(" —")[0]}${mode !== "none" ? ` · ${REF_MODES[mode].label}` : ""} · ${summary}`;
+  } catch (e) {
+    reply.error = e.message || String(e);
+  } finally {
+    pending = null;
+    currentJob = null;
+    setBusy(false);
+  }
+  messages.push(reply);
+  await chatDb.add(reply);
+  renderThread();
+  renderGallery();
+}
+
+async function renderThread() {
+  const thread = $("thread");
+  const items = new Map((await db.all()).map((i) => [i.id, i]));
+  thread.querySelectorAll(".msg").forEach((m) => m.remove());
+  $("chatEmpty").hidden = messages.length > 0 || !!pending;
+
+  for (const msg of messages) {
+    const el = document.createElement("div");
+    el.className = `msg ${msg.role}`;
+    if (msg.role === "user") {
+      if (msg.attachments?.length) {
+        const a = document.createElement("div");
+        a.className = "msg-attach";
+        for (const src of msg.attachments) {
+          const img = document.createElement("img");
+          img.src = src; img.alt = "Attached image";
+          a.append(img);
+        }
+        el.append(a);
+      }
+      const b = document.createElement("div");
+      b.className = "bubble";
+      b.textContent = msg.text;
+      el.append(b);
+      if (msg.mode && msg.mode !== "none") el.append(meta(REF_MODES[msg.mode].label));
+    } else if (msg.error) {
+      el.append(meta(msg.error, true));
+      const orig = messages.find((m) => m.id === msg.replyTo);
+      if (orig) {
+        const acts = document.createElement("div");
+        acts.className = "msg-actions";
+        acts.append(btn("Retry", () => sendChat(orig)));
+        el.append(acts);
+      }
+    } else {
+      const grid = document.createElement("div");
+      grid.className = "results";
+      for (const id of msg.imageIds || []) {
+        const item = items.get(id);
+        const r = document.createElement("div");
+        r.className = "result";
+        if (!item) { r.append(meta("(deleted from gallery)")); grid.append(r); continue; }
+        if (!urls.has(id)) urls.set(id, URL.createObjectURL(item.blob));
+        const open = document.createElement("button");
+        open.type = "button";
+        open.setAttribute("aria-label", "View full size");
+        const img = document.createElement("img");
+        img.src = urls.get(id);
+        img.alt = item.settings.prompt.slice(0, 120);
+        img.width = item.settings.width; img.height = item.settings.height;
+        img.style.height = "auto";
+        open.append(img);
+        open.addEventListener("click", () => openViewer(item));
+        const acts = document.createElement("div");
+        acts.className = "result-actions";
+        acts.append(btn("Edit", () => editInChat(item)));
+        const dl = document.createElement("a");
+        dl.className = "button ghost"; dl.textContent = "Download";
+        dl.href = urls.get(id); dl.download = `studio-${item.settings.seed}-${id}.png`;
+        dl.style.cssText = "padding:4px 10px;font-size:13px";
+        acts.append(dl);
+        r.append(open, acts);
+        grid.append(r);
+      }
+      el.append(grid);
+      if (msg.summary) el.append(meta(msg.summary));
+    }
+    thread.append(el);
+  }
+
+  if (pending) {
+    const el = document.createElement("div");
+    el.className = "msg assistant";
+    const b = document.createElement("div");
+    b.className = "bubble";
+    b.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+    const st = meta(pending.status);
+    st.id = "pendingStatus";
+    st.style.whiteSpace = "pre-wrap";
+    el.append(b, st);
+    thread.append(el);
+  }
+  scrollThread();
+}
+
+function meta(text, isError) {
+  const p = document.createElement("div");
+  p.className = "meta" + (isError ? " error" : "");
+  p.textContent = text;
+  return p;
+}
+function btn(label, fn) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "ghost"; b.textContent = label;
+  b.addEventListener("click", fn);
+  return b;
+}
+function scrollThread() { requestAnimationFrame(() => { const t = $("thread"); t.scrollTop = t.scrollHeight; }); }
+
+async function editInChat(item) {
+  if (view !== "chat") setView("chat");
+  if (!(await askConsent())) return;
+  chatAttach = [{ id: `${Date.now()}`, dataUrl: await prepareImage(item.blob) }];
+  renderAttachments();
+  const input = $("chatInput");
+  input.focus();
+  input.placeholder = "Describe the changes…";
+}
+
+function updateChatBusy() {
+  const b = $("chatSend");
+  if (!b) return;
+  b.textContent = pending ? "Stop" : "Send";
+  b.classList.toggle("primary", !pending);
+  b.classList.toggle("ghost", !!pending);
 }
 
 // ---------- Settings dialog ----------
@@ -543,14 +834,19 @@ function b64ToBlob(b64) {
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Blob([bytes], { type: "image/png" });
 }
-function setBusy(busy) {
-  $("generate").disabled = busy;
-  $("cancel").hidden = !busy;
+let busy = false;
+function setBusy(b) {
+  busy = b;
+  $("generate").disabled = b;
+  $("cancel").hidden = !b;
+  if (typeof updateChatBusy === "function") updateChatBusy();
 }
 
 // ---------- wire up ----------
 initControls();
 initRefs();
+initChat();
+setView(store.get("ui_view") || "chat");
 initSettings();
 updateConn();
 renderGallery();
@@ -558,6 +854,7 @@ $("generate").addEventListener("click", generate);
 $("cancel").addEventListener("click", cancel);
 $("wake").addEventListener("click", wake);
 $("vUseRef").addEventListener("click", () => { const it = viewing; $("viewer").close(); useAsReference(it); });
+
 $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate(); });
 $("vClose").addEventListener("click", () => $("viewer").close());
 $("vReuse").addEventListener("click", () => { reuse(viewing); $("viewer").close(); });
@@ -566,6 +863,7 @@ $("vDelete").addEventListener("click", async () => {
   await db.remove(viewing.id);
   $("viewer").close();
   renderGallery();
+  if (view === "chat") renderThread(); // removed images show as deleted
 });
 $("viewer").addEventListener("click", (e) => { if (e.target === $("viewer")) $("viewer").close(); });
 if (!creds().key) setStatus("Start by opening Settings to connect your RunPod endpoint.");
