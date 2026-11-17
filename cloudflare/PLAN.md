@@ -2,31 +2,9 @@
 
 Status: **paused** (branch `wip-cloudflare-server`). The live site on `main` is unaffected.
 
-## API keys checklist (do before or at the start of the next session)
+## API keys checklist
 
-Two keys were pasted into the chat, so treat them as exposed and delete them. Each one is identified below by its first few characters only.
-
-### RunPod: console.runpod.io → Settings → API Keys
-
-| Key | What it was | Action |
-|---|---|---|
-| Starts `rpa_QHKC…` | First key pasted in chat. RunPod rejected it for account management (probably Restricted / Read-only). | **Delete** |
-| Starts `rpa_BYYS…` | Second key pasted in chat; full access. Used to set up the volume, Pod and endpoints. | **Delete** |
-| The key in the app's Settings (the one from Step 1 of the README) | What the app uses to generate images | **Check** it isn't one of the two above. If it is, create a new key (e.g. `image-studio-app`, Restricted to the two endpoints if offered, otherwise Read/Write) and enter it in the app's **Settings** (never in chat). |
-
-**Next session:** once the private server is live, enter the app's RunPod key once in the new app's Settings. It's then stored on the server for every device.
-
-### Cloudflare: dash.cloudflare.com
-
-| Token | Where | Action |
-|---|---|---|
-| `claude-setup` (R2 token, Admin Read & Write; Access Key ID starts `ec8c5c75…`) | R2 Object Storage → Manage API tokens | **Delete**. It was pasted in chat. |
-| `image-studio-app` (R2 token, Object Read & Write), only if you created it | R2 Object Storage → Manage API tokens | Keep for now if the GitHub Pages app uses it for cloud sync. **Delete** after moving to the private server, which doesn't need it. |
-| **New for the next session:** an API token from the **"Edit Cloudflare Workers"** template | My Profile (top right) → API Tokens → Create Token | **Create** it, and add it to the cloud environment settings as `CLOUDFLARE_API_TOKEN` rather than pasting it in chat. **Delete** it after deployment. |
-
-### GitHub
-
-**Nothing to change.** No GitHub keys or tokens were created. Claude reaches the repository through the Claude GitHub App connection you set up on claude.ai, and the site contains no secrets.
+**Done (2026-11-17).** The user deleted the two exposed RunPod keys, the `claude-setup` and `image-studio-app` R2 tokens, and the deploy token. Its rejection by Cloudflare was confirmed. No Cloudflare API tokens remain. A future redeploy needs a new token from the "Edit Cloudflare Workers" template, added to the cloud environment settings as `CLOUDFLARE_API_TOKEN` (never pasted in chat) and deleted afterwards.
 
 ## Goal
 
