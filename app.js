@@ -14,10 +14,14 @@ const store = {
   },
   del(k) { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch {} },
 };
-const creds = () => ({ key: store.get("rp_key") || "", endpoint: store.get("rp_endpoint") || "" });
+const creds = () => ({ key: store.get("rp_key") || "", endpoint: store.get("rp_endpoint") || "", editEndpoint: store.get("rp_edit_endpoint") || "" });
+// Character / scene reference (Qwen Image Edit) can run on its own endpoint so each GPU worker
+// only holds one set of large models; it falls back to the main endpoint if none is set.
+const endpointFor = (modelId) => (modelId === "qwen-edit" && creds().editEndpoint) || creds().endpoint;
 
-async function rp(path, opts = {}) {
-  const { key, endpoint } = creds();
+async function rp(path, opts = {}, endpointOverride) {
+  const { key } = creds();
+  const endpoint = endpointOverride || creds().endpoint;
   if (!key || !endpoint) throw new Error("Open Settings and add your RunPod endpoint ID and API key.");
   const res = await fetch(`${API}/${endpoint}${path}`, {
     ...opts,
@@ -42,18 +46,18 @@ function checkPrompt(text) {
   return m ? m[0] : null;
 }
 
-// ---------- Gallery storage (IndexedDB, this browser only) ----------
-// "images" = gallery, "refs" = the current reference images (kept so characters persist between visits).
+// ---------- Storage (IndexedDB in this browser, optionally synced to Cloudflare R2) ----------
+// "images" = gallery, "refs" = reference images, "chat" = chat messages, "library" = library entries.
+// In the cloud each item is <prefix>/<id>.json; gallery images also have <prefix>/<id>.png.
+const CLOUD_PREFIX = { images: "gallery", refs: "refs", chat: "chat", library: "library" };
 let _idb = null;
 async function idb() {
   if (_idb) return _idb;
   _idb = await new Promise((resolve, reject) => {
-    const req = indexedDB.open("image-studio", 3);
+    const req = indexedDB.open("image-studio", 4);
     req.onupgradeneeded = () => {
       const d = req.result;
-      if (!d.objectStoreNames.contains("images")) d.createObjectStore("images", { keyPath: "id" });
-      if (!d.objectStoreNames.contains("refs")) d.createObjectStore("refs", { keyPath: "id" });
-      if (!d.objectStoreNames.contains("chat")) d.createObjectStore("chat", { keyPath: "id" });
+      for (const n of Object.keys(CLOUD_PREFIX)) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -61,6 +65,7 @@ async function idb() {
   return _idb;
 }
 function makeStore(name) {
+  const prefix = CLOUD_PREFIX[name];
   const tx = async (mode, fn) => {
     const d = await idb();
     return new Promise((resolve, reject) => {
@@ -70,16 +75,126 @@ function makeStore(name) {
       t.onerror = () => reject(t.error);
     });
   };
-  return {
-    add: (item) => tx("readwrite", (s) => s.put(item)),
-    remove: (id) => tx("readwrite", (s) => s.delete(id)),
+  const local = {
+    put: (item) => tx("readwrite", (s) => s.put(item)),
+    del: (id) => tx("readwrite", (s) => s.delete(id)),
+    get: (id) => tx("readonly", (s) => s.get(id)),
     all: () => tx("readonly", (s) => s.getAll()),
-    clear: () => tx("readwrite", (s) => s.clear()),
+  };
+  const keysFor = (id) => name === "images" ? [`${prefix}/${id}.json`, `${prefix}/${id}.png`] : [`${prefix}/${id}.json`];
+
+  async function push(item) {
+    if (!cloud.configured()) return;
+    const { blob, synced, ...meta } = item;
+    if (blob) await cloud.put(`${prefix}/${item.id}.png`, blob, "image/png");
+    await cloud.put(`${prefix}/${item.id}.json`, JSON.stringify(meta), "application/json");
+    const cur = await local.get(item.id);
+    if (cur) await local.put({ ...cur, synced: true });
+  }
+  async function deleteRemote(id) {
+    if (!cloud.configured()) return;
+    for (const k of keysFor(id)) {
+      try { await cloud.del(k); } catch { pendingDeletes.add(k); }
+    }
+  }
+
+  return {
+    name, prefix, local, push,
+    async add(item) {
+      await local.put({ ...item, synced: false });
+      push(item).then(() => syncStatus.ok(), (e) => syncStatus.fail(e));
+    },
+    async remove(id) { await local.del(id); deleteRemote(id); },
+    all: local.all,
+    async clear() {
+      const all = await local.all();
+      await tx("readwrite", (s) => s.clear());
+      for (const it of all) deleteRemote(it.id);
+    },
+    // Two-way sync: upload new local items, download items from other devices,
+    // and remove local items that were deleted on another device.
+    async sync() {
+      const remoteIds = new Set((await cloud.list(prefix + "/")).filter((k) => k.endsWith(".json")).map((k) => k.slice(prefix.length + 1, -5)));
+      const locals = await local.all();
+      let changed = false;
+      for (const it of locals) {
+        if (!it.synced) { await push(it); }
+        else if (!remoteIds.has(it.id)) { await local.del(it.id); changed = true; }
+      }
+      const have = new Set(locals.map((i) => i.id));
+      for (const id of remoteIds) {
+        if (have.has(id)) continue;
+        const res = await cloud.get(`${prefix}/${id}.json`);
+        if (!res) continue;
+        const item = await res.json();
+        if (name === "images") {
+          const img = await cloud.get(`${prefix}/${id}.png`);
+          if (!img) continue;
+          item.blob = new Blob([await img.arrayBuffer()], { type: "image/png" });
+        }
+        await local.put({ ...item, synced: true });
+        changed = true;
+      }
+      return changed;
+    },
   };
 }
 const db = makeStore("images");
 const refDb = makeStore("refs");
 const chatDb = makeStore("chat");
+const libDb = makeStore("library");
+
+// Remote deletes that failed (e.g. offline) are retried on the next sync.
+const pendingDeletes = {
+  load() { try { return JSON.parse(store.get("cloud_pending_deletes") || "[]"); } catch { return []; } },
+  add(k) { const l = this.load(); if (!l.includes(k)) l.push(k); store.set("cloud_pending_deletes", JSON.stringify(l), true); },
+  async flush() {
+    const left = [];
+    for (const k of this.load()) { try { await cloud.del(k); } catch { left.push(k); } }
+    store.set("cloud_pending_deletes", JSON.stringify(left), true);
+  },
+};
+
+const syncStatus = {
+  set(text, cls) { const el = $("syncState"); if (!el) return; el.textContent = text; el.className = "conn " + (cls || ""); el.hidden = !cloud.configured(); },
+  ok() { this.set(`Synced ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`, "ok"); },
+  fail(e) { this.set("Sync error", "error"); this.lastError = e?.message || String(e); $("syncState").title = this.lastError; },
+};
+
+let syncing = null;
+let lastSync = 0;
+function syncAll() {
+  if (!cloud.configured()) { syncStatus.set(""); return Promise.resolve(); }
+  if (syncing) return syncing;
+  syncStatus.set("Syncing…");
+  syncing = (async () => {
+    try {
+      await pendingDeletes.flush();
+      const changed = [];
+      for (const st of [db, refDb, chatDb, libDb]) if (await st.sync()) changed.push(st.name);
+      lastSync = Date.now();
+      syncStatus.ok();
+      if (changed.length) await reloadAfterSync(changed);
+    } catch (e) {
+      syncStatus.fail(e);
+      throw e;
+    } finally {
+      syncing = null;
+    }
+  })();
+  return syncing;
+}
+
+function cloudCreds() {
+  return { endpoint: store.get("r2_endpoint") || "", bucket: store.get("r2_bucket") || "image-studio",
+    keyId: store.get("r2_key_id") || "", secret: store.get("r2_secret") || "" };
+}
+// Accepts the full S3 URL Cloudflare shows (https://<account>.r2.cloudflarestorage.com) or just the account ID.
+function applyCloudCreds() {
+  const c = cloudCreds();
+  const account = (c.endpoint.match(/([0-9a-f]{32})/i) || [])[1] || "";
+  cloud.configure(account && c.keyId && c.secret ? { account, bucket: c.bucket, keyId: c.keyId, secret: c.secret } : null);
+}
 
 // ---------- UI state ----------
 let size = "1:1";
@@ -222,7 +337,7 @@ async function executeGeneration(settings, useRefs, onStatus) {
     if (st === "IN_QUEUE") {
       onStatus(`Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take 1–3 minutes while the worker boots and loads the model. Tip: press “Wake up GPU” when you sit down.)`);
     } else onStatus(`Generating… ${secs}s`);
-  });
+  }, true, endpointFor(settings.model));
   if (result.status !== "COMPLETED") throw new Error(describeFailure(result));
   const images = extractImages(result.output);
   if (!images.length) throw new Error("The job finished but returned no images. " + JSON.stringify(result.output).slice(0, 300));
@@ -241,7 +356,8 @@ async function executeGeneration(settings, useRefs, onStatus) {
 async function generate() {
   if (currentJob || busy) return;
   let prep;
-  try { prep = prepareSettings($("prompt").value.trim(), refs); }
+  const lib = applyLibrary($("prompt").value.trim(), refs.slice(0, REF_MODES[refMode()].maxImages || 0), refMode(), "Studio");
+  try { prep = prepareSettings(lib.prompt, lib.atts, lib.mode); }
   catch (e) { return setStatus(e.message, true); }
   const { settings, useRefs } = prep;
   setBusy(true);
@@ -260,14 +376,15 @@ async function generate() {
 }
 
 // Sends a job and polls until it finishes. onProgress(status, seconds) is called while waiting.
-async function runJob(input, onProgress, track = true) {
+let currentEndpoint = null;
+async function runJob(input, onProgress, track = true, endpoint) {
   const started = Date.now();
-  const job = await rp("/run", { method: "POST", body: JSON.stringify({ input }) });
-  if (track) currentJob = job.id;
+  const job = await rp("/run", { method: "POST", body: JSON.stringify({ input }) }, endpoint);
+  if (track) { currentJob = job.id; currentEndpoint = endpoint; }
   while (true) {
     await sleep(2000);
     if (track && currentJob !== job.id) throw new Error("Cancelled.");
-    const result = await rp(`/status/${job.id}`);
+    const result = await rp(`/status/${job.id}`, {}, endpoint);
     if (result.status === "IN_QUEUE" || result.status === "IN_PROGRESS") {
       onProgress?.(result.status, Math.round((Date.now() - started) / 1000));
     } else return result;
@@ -303,7 +420,7 @@ async function wake() {
 async function cancel() {
   const id = currentJob;
   currentJob = null;
-  if (id) { try { await rp(`/cancel/${id}`, { method: "POST" }); } catch {} }
+  if (id) { try { await rp(`/cancel/${id}`, { method: "POST" }, currentEndpoint); } catch {} }
   setStatus("Cancelled.");
 }
 
@@ -312,6 +429,9 @@ function describeFailure(r) {
   const msg = typeof err === "string" ? err : JSON.stringify(err);
   if (/not in list|value_not_in_list|unet_name|clip_name|lora_name|model_patch/i.test(msg)) {
     return "The worker doesn't have this model installed. If you picked a model marked “after upgrade”, finish Step 6 of the guide first.\n\nDetails: " + msg.slice(0, 400);
+  }
+  if (/not reachable|HTTP unreachable|websocket reconnect/i.test(msg)) {
+    return "The GPU worker crashed (usually it ran out of memory after loading several large models). Wait about a minute for it to shut down, then press Retry.\n\nDetails: " + msg.slice(0, 300);
   }
   if (/out of memory|OOM/i.test(msg)) {
     return "The GPU ran out of memory. Try fewer images at once, or choose a GPU with more VRAM (24 GB+) for your endpoint.";
@@ -518,6 +638,11 @@ function initRefs() {
   wrap.addEventListener("dragleave", () => wrap.classList.remove("drag"));
   wrap.addEventListener("drop", (e) => { e.preventDefault(); wrap.classList.remove("drag"); addRefs(e.dataTransfer.files); });
   document.addEventListener("paste", (e) => {
+    if ($("libEditor").open) {
+      const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+      if (files.length) { e.preventDefault(); addLibImages(files); }
+      return;
+    }
     if (view === "chat") {
       const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
       if (files.length) { e.preventDefault(); addChatAttachments(files); }
@@ -549,15 +674,17 @@ let chatAttach = []; // [{ id, dataUrl }]
 let pending = null; // { status } while a chat job runs
 
 function setView(v) {
-  view = v === "studio" ? "studio" : "chat";
+  view = ["studio", "library"].includes(v) ? v : "chat";
   store.set("ui_view", view, true);
   document.body.dataset.view = view;
   $("tabChat").setAttribute("aria-selected", String(view === "chat"));
   $("tabGallery").setAttribute("aria-selected", String(view === "studio"));
+  $("tabLibrary").setAttribute("aria-selected", String(view === "library"));
   $("chatView").hidden = view !== "chat";
   $("galleryView").hidden = view !== "studio";
+  $("libraryView").hidden = view !== "library";
   applyRefMode(false);
-  if (view === "chat") scrollThread();
+  if (view === "chat") renderThread(); // also picks up chat changes synced while on another tab
 }
 
 function initChat() {
@@ -573,13 +700,14 @@ function initChat() {
   cm.addEventListener("change", () => { store.set("ui_chatmode", cm.value, true); renderAttachments(); });
 
   const cs = $("chatStrength");
-  cs.value = store.get("ui_chatstrength") || "0.7";
+  cs.value = store.get("ui_chatstrength") || "0.75";
   const showStrength = () => { $("chatStrengthVal").textContent = Number(cs.value).toFixed(2); };
   cs.addEventListener("input", () => { store.set("ui_chatstrength", cs.value, true); showStrength(); });
   showStrength();
 
   $("tabChat").addEventListener("click", () => setView("chat"));
   $("tabGallery").addEventListener("click", () => setView("studio"));
+  $("tabLibrary").addEventListener("click", () => setView("library"));
   $("newChat").addEventListener("click", async () => {
     if (pending) return;
     if (messages.length && !confirm("Start a new chat? Your images stay in the Gallery.")) return;
@@ -637,12 +765,15 @@ function flashAttachHint(msg) {
 async function sendChat(retryOf) {
   if (pending || busy) return;
   const text = retryOf ? retryOf.text : $("chatInput").value.trim();
-  const atts = retryOf ? retryOf.attachments.map((dataUrl, i) => ({ id: `${retryOf.id}${i}`, dataUrl })) : chatAttach.slice();
-  const mode = retryOf ? retryOf.mode : (atts.length ? $("chatRefMode").value : "none");
   if (!text) { $("chatInput").focus(); return; }
+  // A retry resends exactly what was sent before; a new message gets library terms applied.
+  const lib = retryOf
+    ? { prompt: retryOf.prompt || retryOf.text, atts: retryOf.attachments.map((dataUrl, i) => ({ id: `${retryOf.id}${i}`, dataUrl })), mode: retryOf.mode, used: retryOf.library || [] }
+    : applyLibrary(text, chatAttach.slice(), chatAttach.length ? $("chatRefMode").value : "none");
+  const mode = lib.mode;
 
   let prep;
-  try { prep = prepareSettings(text, atts, mode, $("chatStrength").value); }
+  try { prep = prepareSettings(lib.prompt, lib.atts, mode, $("chatStrength").value); }
   catch (e) {
     messages.push({ id: `e${Date.now()}`, created: Date.now(), role: "assistant", error: e.message, local: true });
     return renderThread();
@@ -650,14 +781,16 @@ async function sendChat(retryOf) {
 
   let userMsg = retryOf;
   if (!retryOf) {
-    userMsg = { id: `u${Date.now()}`, created: Date.now(), role: "user", text, mode,
-      attachments: prep.useRefs.map((r) => r.dataUrl) };
+    userMsg = { id: `u${Date.now()}`, created: Date.now(), role: "user", text, prompt: lib.prompt, mode,
+      library: lib.used, attachments: prep.useRefs.map((r) => r.dataUrl) };
     messages.push(userMsg);
     await chatDb.add(userMsg);
     $("chatInput").value = "";
     $("chatInput").style.height = "";
     chatAttach = [];
     renderAttachments();
+    libChoice.clear();
+    updateChips();
   }
 
   pending = { status: "Sending…" };
@@ -709,7 +842,10 @@ async function renderThread() {
       b.className = "bubble";
       b.textContent = msg.text;
       el.append(b);
-      if (msg.mode && msg.mode !== "none") el.append(meta(REF_MODES[msg.mode].label));
+      const notes = [];
+      if (msg.mode && msg.mode !== "none") notes.push(REF_MODES[msg.mode].label);
+      if (msg.library?.length) notes.push("Library: " + msg.library.join(", "));
+      if (notes.length) el.append(meta(notes.join(" · ")));
     } else if (msg.error) {
       el.append(meta(msg.error, true));
       const orig = messages.find((m) => m.id === msg.replyTo);
@@ -803,16 +939,238 @@ function updateChatBusy() {
   b.classList.toggle("ghost", !!pending);
 }
 
+// ---------- Library ----------
+// Entry: { id, name, aliases: [], description, images: [dataUrl], created }
+let library = [];
+const libChoice = new Map(); // entry id -> { on, image } for the message being written
+let editing = null; // entry being edited (copy)
+
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function termsOf(e) { return [e.name, ...(e.aliases || [])].map((t) => t.trim()).filter(Boolean); }
+function libraryMatches(text) {
+  if (!text) return [];
+  return library.filter((e) => termsOf(e).some((t) =>
+    new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRe(t)}(s|es|ed)?(?=$|[^\\p{L}\\p{N}])`, "iu").test(text)));
+}
+
+// Adds matched library descriptions to the prompt and, when "+ example" is ticked, attaches the
+// entry's first example image (switching to Character / scene reference, the mode that uses several images).
+function applyLibrary(text, atts, mode) {
+  let prompt = text;
+  const out = atts.slice();
+  const used = [];
+  for (const e of libraryMatches(text)) {
+    const ch = libChoice.get(e.id) || {};
+    if (ch.on === false) continue;
+    let line = e.description?.trim() ? `${e.name}: ${e.description.trim()}` : "";
+    if (ch.image && e.images?.length && out.length < 3) {
+      mode = "character";
+      out.push({ id: `lib${e.id}`, dataUrl: e.images[0] });
+      const n = out.length;
+      line += `${line ? " " : ""}The ${e.name} must look like the one shown in image ${n}. Use image ${n} only as a reference for the ${e.name}, not for the people or the setting.`;
+      used.push(`${e.name} (+ example)`);
+    } else used.push(e.name);
+    if (line) prompt += `\n\n${line}`;
+  }
+  return { prompt, atts: out, mode, used };
+}
+
+function updateChips() {
+  drawChips($("libChipsChat"), $("chatInput").value);
+  drawChips($("libChipsStudio"), $("prompt").value);
+}
+function drawChips(box, text) {
+  box.textContent = "";
+  const matches = libraryMatches(text);
+  box.hidden = !matches.length;
+  for (const e of matches) {
+    const ch = libChoice.get(e.id) || { on: true, image: false };
+    const wrap = document.createElement("span");
+    wrap.className = "lib-chip";
+    const main = document.createElement("button");
+    main.type = "button";
+    main.textContent = "📖 " + e.name;
+    main.setAttribute("aria-pressed", String(ch.on !== false));
+    main.title = ch.on !== false ? `Adds your “${e.name}” description to the prompt. Click to skip it for this message.` : "Skipped for this message. Click to use it.";
+    main.addEventListener("click", () => { libChoice.set(e.id, { ...ch, on: ch.on === false }); updateChips(); });
+    wrap.append(main);
+    if (e.images?.length && ch.on !== false) {
+      const ex = document.createElement("button");
+      ex.type = "button";
+      ex.className = "ex";
+      ex.textContent = ch.image ? "✓ example" : "+ example";
+      ex.setAttribute("aria-pressed", String(!!ch.image));
+      ex.title = "Attach this entry's first example image. Uses Character / scene reference mode (needs the Step 6 upgrade); a message can have 3 images in total.";
+      ex.addEventListener("click", () => { libChoice.set(e.id, { ...ch, on: true, image: !ch.image }); updateChips(); });
+      wrap.append(ex);
+    }
+    box.append(wrap);
+  }
+}
+
+function renderLibrary() {
+  const list = $("libList");
+  list.textContent = "";
+  $("libEmpty").hidden = library.length > 0;
+  for (const e of [...library].sort((a, b) => a.name.localeCompare(b.name))) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "lib-card";
+    if (e.images?.length) {
+      const img = document.createElement("img");
+      img.src = e.images[0]; img.alt = "";
+      card.append(img);
+    } else {
+      const ph = document.createElement("span");
+      ph.className = "noimg";
+      card.append(ph);
+    }
+    const body = document.createElement("span");
+    const t = document.createElement("strong");
+    t.textContent = e.name;
+    const al = document.createElement("span");
+    al.className = "hint";
+    al.textContent = [e.aliases?.length ? "Also: " + e.aliases.join(", ") : "", `${e.images?.length || 0} example image${e.images?.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+    const d = document.createElement("span");
+    d.className = "hint";
+    d.textContent = e.description || "No description";
+    body.append(t, al, d);
+    card.append(body);
+    card.addEventListener("click", () => openLibEditor(e));
+    list.append(card);
+  }
+}
+
+function openLibEditor(entry) {
+  editing = entry ? { ...entry, images: [...(entry.images || [])] } : { id: null, name: "", aliases: [], description: "", images: [] };
+  $("libTitle").textContent = entry ? "Edit library entry" : "New library entry";
+  $("libName").value = editing.name;
+  $("libAliases").value = (editing.aliases || []).join(", ");
+  $("libDesc").value = editing.description || "";
+  $("libError").textContent = "";
+  $("libDelete").hidden = !entry;
+  renderLibImages();
+  $("libEditor").showModal();
+}
+function renderLibImages() {
+  const box = $("libImgs");
+  box.textContent = "";
+  editing.images.forEach((src, i) => {
+    const d = document.createElement("div");
+    d.className = "ref";
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "ref-pick";
+    pick.title = i === 0 ? "Used as the reference" : "Click to make this the reference image";
+    pick.disabled = i === 0;
+    const img = document.createElement("img");
+    img.src = src; img.alt = `Example ${i + 1}`;
+    pick.append(img);
+    pick.addEventListener("click", () => { editing.images.splice(i, 1); editing.images.unshift(src); renderLibImages(); });
+    const x = document.createElement("button");
+    x.type = "button"; x.className = "ref-x"; x.textContent = "×";
+    x.setAttribute("aria-label", `Remove example ${i + 1}`);
+    x.addEventListener("click", () => { editing.images.splice(i, 1); renderLibImages(); });
+    const cap = document.createElement("span");
+    cap.textContent = i === 0 ? "reference" : `example ${i + 1}`;
+    d.append(pick, x, cap);
+    box.append(d);
+  });
+}
+async function addLibImages(files) {
+  files = [...files].filter((f) => f.type.startsWith("image/"));
+  if (!files.length || !editing) return;
+  if (!(await askConsent())) return;
+  if (!$("libEditor").open) $("libEditor").showModal();
+  for (const f of files) {
+    if (editing.images.length >= 6) { $("libError").textContent = "Up to 6 example images per entry."; break; }
+    try { editing.images.push(await prepareImage(f)); } catch { $("libError").textContent = "Couldn't read that image. Try a JPG or PNG."; }
+  }
+  renderLibImages();
+}
+async function saveLibEntry() {
+  const name = $("libName").value.trim();
+  const aliases = $("libAliases").value.split(",").map((a) => a.trim()).filter(Boolean);
+  const description = $("libDesc").value.trim();
+  const err = $("libError");
+  if (!name) { err.textContent = "Give the entry a term."; return; }
+  const flagged = checkPrompt([name, ...aliases, description].join(" "));
+  if (flagged) { err.textContent = `This studio only creates images of adults. Remove "${flagged}".`; return; }
+  const clash = library.find((e) => e.id !== editing.id && termsOf(e).some((t) => [name, ...aliases].some((n) => n.toLowerCase() === t.toLowerCase())));
+  if (clash) { err.textContent = `“${clash.name}” already uses one of these words.`; return; }
+  const entry = { ...editing, id: editing.id || `${Date.now()}`, name, aliases, description, created: editing.created || Date.now() };
+  delete entry.synced;
+  await libDb.add(entry);
+  library = library.filter((e) => e.id !== entry.id).concat(entry);
+  $("libEditor").close();
+  renderLibrary();
+  updateChips();
+}
+
+function initLibrary() {
+  $("libNew").addEventListener("click", () => openLibEditor(null));
+  $("libSave").addEventListener("click", saveLibEntry);
+  $("libDelete").addEventListener("click", async () => {
+    if (!editing?.id || !confirm(`Delete “${editing.name}” from your library?`)) return;
+    await libDb.remove(editing.id);
+    library = library.filter((e) => e.id !== editing.id);
+    $("libEditor").close();
+    renderLibrary();
+    updateChips();
+  });
+  $("libFile").addEventListener("change", (e) => { addLibImages(e.target.files); e.target.value = ""; });
+  const ed = $("libEditor");
+  ed.addEventListener("dragover", (e) => { e.preventDefault(); ed.classList.add("drag"); });
+  ed.addEventListener("dragleave", (e) => { if (!ed.contains(e.relatedTarget)) ed.classList.remove("drag"); });
+  ed.addEventListener("drop", (e) => { e.preventDefault(); ed.classList.remove("drag"); addLibImages(e.dataTransfer.files); });
+  $("chatInput").addEventListener("input", updateChips);
+  $("prompt").addEventListener("input", updateChips);
+  libDb.all().then((all) => { library = all; renderLibrary(); updateChips(); }).catch(() => {});
+}
+
 // ---------- Settings dialog ----------
 function initSettings() {
   const dlg = $("settings");
   $("openSettings").addEventListener("click", () => {
     const c = creds();
     $("endpointId").value = c.endpoint;
+    $("editEndpointId").value = c.editEndpoint;
     $("apiKey").value = c.key;
     $("testResult").textContent = "";
+    const cc = cloudCreds();
+    $("r2Endpoint").value = cc.endpoint;
+    $("r2Bucket").value = cc.bucket;
+    $("r2KeyId").value = cc.keyId;
+    $("r2Secret").value = cc.secret;
+    $("syncResult").textContent = syncStatus.lastError && cloud.configured() ? "Last sync error: " + syncStatus.lastError : "";
+    $("backupResult").textContent = "";
     dlg.showModal();
   });
+  $("syncNow").addEventListener("click", async () => {
+    saveCreds();
+    const out = $("syncResult");
+    out.classList.remove("error");
+    if (!cloud.configured()) { out.textContent = "Fill in the endpoint URL, Access Key ID and Secret Access Key."; out.classList.add("error"); return; }
+    out.textContent = "Syncing…";
+    try {
+      await syncAll();
+      const n = (await db.all()).length, l = (await libDb.all()).length;
+      out.textContent = `Synced. ${n} gallery image${n === 1 ? "" : "s"} and ${l} library entr${l === 1 ? "y" : "ies"} on this device.`;
+    } catch (e) {
+      out.textContent = cloudErrorHelp(e);
+      out.classList.add("error");
+    }
+  });
+  $("syncOff").addEventListener("click", () => {
+    for (const k of ["r2_endpoint", "r2_key_id", "r2_secret"]) store.del(k);
+    $("r2KeyId").value = ""; $("r2Secret").value = "";
+    applyCloudCreds();
+    syncStatus.set("");
+    updateStorageHint();
+    $("syncResult").textContent = "Sync turned off on this device. Your images stay here and in the bucket.";
+  });
+  $("exportBtn").addEventListener("click", exportBackup);
+  $("importFile").addEventListener("change", (e) => { importBackup(e.target.files[0]); e.target.value = ""; });
   dlg.addEventListener("close", () => {
     if (dlg.returnValue === "save") saveCreds();
     updateConn();
@@ -844,7 +1202,79 @@ function initSettings() {
 function saveCreds() {
   const remember = $("remember").checked;
   store.set("rp_endpoint", $("endpointId").value.trim(), remember);
+  store.set("rp_edit_endpoint", $("editEndpointId").value.trim(), remember);
   store.set("rp_key", $("apiKey").value.trim(), remember);
+  const before = JSON.stringify(cloudCreds());
+  store.set("r2_endpoint", $("r2Endpoint").value.trim(), remember);
+  store.set("r2_bucket", $("r2Bucket").value.trim() || "image-studio", remember);
+  store.set("r2_key_id", $("r2KeyId").value.trim(), remember);
+  store.set("r2_secret", $("r2Secret").value.trim(), remember);
+  applyCloudCreds();
+  updateStorageHint();
+  if (JSON.stringify(cloudCreds()) !== before && cloud.configured()) syncAll().catch(() => {});
+}
+
+function cloudErrorHelp(e) {
+  const m = e?.message || String(e);
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return "Couldn't reach Cloudflare. Check the endpoint URL, and that the bucket's CORS policy allows this site.";
+  if (/SignatureDoesNotMatch|InvalidAccessKeyId|Unauthorized|AccessDenied|403|401/i.test(m)) return "Cloudflare rejected the key. Check the Access Key ID and Secret, and that the key can read and write this bucket. (" + m + ")";
+  if (/NoSuchBucket/i.test(m)) return "That bucket doesn't exist. Check the bucket name.";
+  return m;
+}
+
+function updateStorageHint() {
+  $("storageHint").textContent = cloud.configured() ? "Synced to your cloud storage" : "Saved only in this browser";
+}
+
+async function reloadAfterSync(changed) {
+  if (changed.includes("refs")) { refs = (await refDb.all()).sort((a, b) => a.added - b.added); renderRefs(); }
+  if (changed.includes("library")) { library = await libDb.all(); renderLibrary(); updateChips(); }
+  if (changed.includes("chat") && !pending) messages = (await chatDb.all()).sort((a, b) => a.created - b.created);
+  if (changed.includes("images") || changed.includes("chat")) { renderGallery(); if (view === "chat" && !pending) renderThread(); }
+}
+
+// ---------- Backup ----------
+const blobToDataUrl = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+async function exportBackup() {
+  const out = $("backupResult");
+  out.classList.remove("error");
+  out.textContent = "Preparing backup…";
+  try {
+    const images = [];
+    for (const it of await db.all()) { const { blob, synced, ...rest } = it; images.push({ ...rest, png: await blobToDataUrl(blob) }); }
+    const strip = (l) => l.map(({ synced, ...r }) => r);
+    const data = { app: "image-studio", version: 1, exported: new Date().toISOString(), images,
+      refs: strip(await refDb.all()), chat: strip(await chatDb.all()), library: strip(await libDb.all()) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `image-studio-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    out.textContent = `Backup saved: ${images.length} images, ${data.library.length} library entries, ${data.chat.length} chat messages.`;
+  } catch (e) { out.textContent = "Backup failed: " + e.message; out.classList.add("error"); }
+}
+async function importBackup(file) {
+  const out = $("backupResult");
+  out.classList.remove("error");
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== "image-studio") throw new Error("This isn't an Image Studio backup file.");
+    let added = 0;
+    const pairs = [[db, data.images], [refDb, data.refs], [chatDb, data.chat], [libDb, data.library]];
+    for (const [st, list] of pairs) {
+      const have = new Set((await st.all()).map((i) => i.id));
+      for (const it of list || []) {
+        if (have.has(it.id)) continue;
+        const item = { ...it };
+        if (st === db) { item.blob = b64ToBlob(item.png); delete item.png; }
+        await st.add(item);
+        added++;
+      }
+    }
+    out.textContent = `Imported ${added} new item${added === 1 ? "" : "s"}.`;
+    await reloadAfterSync(["images", "refs", "chat", "library"]);
+  } catch (e) { out.textContent = "Import failed: " + e.message; out.classList.add("error"); }
 }
 
 function updateConn(ok) {
@@ -875,13 +1305,19 @@ function setBusy(b) {
 }
 
 // ---------- wire up ----------
+applyCloudCreds();
 initControls();
 initRefs();
 initChat();
+initLibrary();
+updateStorageHint();
 setView(store.get("ui_view") || "chat");
 initSettings();
 updateConn();
 renderGallery();
+syncAll().catch(() => {});
+// Pick up changes from other devices when you come back to this tab.
+window.addEventListener("focus", () => { if (Date.now() - lastSync > 60000) syncAll().catch(() => {}); });
 $("generate").addEventListener("click", generate);
 $("cancel").addEventListener("click", cancel);
 $("wake").addEventListener("click", wake);

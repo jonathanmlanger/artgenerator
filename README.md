@@ -83,6 +83,8 @@ The site's code is public, but it contains no keys or images, and it tells searc
 
 **Gallery tab:** shows every image, plus the classic prompt box and reference uploader.
 
+**Library tab:** your saved terms and examples (see Step 7).
+
 **Reference images (Gallery tab):** choose a mode under **Reference image**, then add an image (button, drag & drop, or paste). Reference images stay saved in your browser until you remove them, so a character you've developed is there next time. They are resized to at most 1536 px before upload.
 
 **Prompt tips:** these models understand full sentences. Describe the subject, pose, clothing, setting, lighting, camera/lens or art medium, and mood. Keep the same **seed** and change one phrase at a time to refine an image.
@@ -117,6 +119,27 @@ The extra models (about 58 GB) live on a **network volume**: a RunPod disk that 
 
 ---
 
+**6e. Separate endpoint for Character / scene reference (recommended):** a GPU worker that has loaded the Z-Image and Chroma models *and* the Qwen editor runs out of memory and crashes. Create a second endpoint (**Serverless → New Endpoint**, same Docker image `runpod/worker-comfyui:5.10.0-z-image-turbo`, same network volume, **48 GB GPU first**, 0 active / 1 max workers, 60 s idle timeout) and paste its ID into the app's **Settings → Character reference endpoint ID**. Character / scene reference jobs then run there and everything else on the main endpoint.
+
+## Step 7 (optional): Library
+
+The **Library** tab stores terms the models struggle with. Each entry has the term (plus other words that should match), a precise description, and up to 6 example images. When a saved term appears in a prompt, a 📖 chip shows under the message box:
+
+- The **description is added to the prompt** automatically (click the chip to skip it for that message).
+- Click **+ example** to also attach the entry's first example image. This switches the message to Character / scene reference mode, which takes up to 3 images in total.
+
+If a concept still doesn't come out right with a good description and example, it's a candidate for training a LoRA (a small add-on that teaches the model the concept permanently).
+
+## Step 8 (optional): Cloud sync with Cloudflare R2
+
+By default everything (gallery, chats, reference images, library) is stored only in your browser. Cloud sync keeps a copy in your private Cloudflare R2 bucket so it appears on every device you connect.
+
+1. **Bucket:** a private bucket named `image-studio` exists, and its CORS policy only allows requests from `https://jonathanmlanger.github.io`.
+2. **App key:** Cloudflare → **R2 → Manage API tokens → Create Account API token** (or User API token): name `image-studio-app`, permission **Object Read & Write**, **apply to specific bucket: `image-studio`**. Copy the **Access Key ID**, **Secret Access Key** and the **S3 endpoint URL** (`https://<account-id>.r2.cloudflarestorage.com`).
+3. **In the app:** **Settings → Cloud sync**, paste the three values (bucket `image-studio`) and click **Save & sync now**. Repeat on each device.
+
+The top bar shows "Synced <time>" (or "Sync error"; hover for details). Deleting an image, a library entry, or starting a **New chat** on one device removes it everywhere at the next sync. **Settings → Backup** exports everything to a single file, which you can import on any device.
+
 ## Costs (rough guide)
 
 RunPod bills per second while a worker runs, including startup and idle-timeout time. On a 24 GB GPU, a warm Z-Image Turbo image is typically a fraction of a cent. Startups and idle time are the main costs. Check prices on your endpoint's page, and set a spending limit/alert in RunPod billing.
@@ -131,6 +154,8 @@ RunPod bills per second while a worker runs, including startup and idle-timeout 
 | "The worker doesn't have this model installed" | Finish Step 6, and check the endpoint has the network volume attached. Turn on `NETWORK_VOLUME_DEBUG=true` and look at the worker **Logs** to see which models it found. |
 | No GPUs available after attaching the volume | The endpoint can only use GPUs in the volume's datacenter. Edit the endpoint and tick more GPU types. |
 | "The GPU ran out of memory" | Generate fewer images at once, or add a 48 GB GPU type. |
+| "The GPU worker crashed" / "ComfyUI … not reachable" | The worker loaded too many large models. Wait a minute for it to shut down, then retry. If it keeps happening with Character / scene reference, set up the separate endpoint (Step 6e). |
+| "Sync error" in the top bar | Hover it for details. Usually a mistyped key, or a key that isn't allowed to read and write the `image-studio` bucket. |
 | "Request too large" when using references | Use fewer or smaller reference images. RunPod limits a job to 10 MB. |
 | Pose mode copies too much detail (clothing, background) | Lower Strength to 0.5–0.7, or crop the reference to just the figures. |
 | Images vanished | They're stored per browser. Clearing site data or using private browsing removes them. Download images you want to keep. |
@@ -139,4 +164,5 @@ RunPod bills per second while a worker runs, including startup and idle-timeout 
 
 - `index.html`, `styles.css`, `app.js` — the web app
 - `workflows.js` — the ComfyUI workflows for each model (based on ComfyUI's official templates)
+- `cloud.js` — the Cloudflare R2 (S3-compatible) client used for cloud sync
 - `worker/download-models.sh` — downloads the Step 6 models onto your network volume

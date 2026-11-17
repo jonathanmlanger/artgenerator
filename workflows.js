@@ -119,8 +119,8 @@ const REF_MODES = {
   },
   img2img: {
     label: "Start from this image",
-    note: "Repaints your image. Low strength keeps colors and layout close to the original; high strength changes more. Works with any model.",
-    maxImages: 1, model: null, needsUpgrade: false, strength: 0.6,
+    note: "Repaints your image with any model. Strength: 0.5–0.7 subtle touch-ups, ~0.8 restyle (e.g. photo → painting), 0.9+ big changes that keep only the rough layout.",
+    maxImages: 1, model: null, needsUpgrade: false, strength: 0.75,
   },
   character: {
     label: "Character / scene reference",

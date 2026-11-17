@@ -210,3 +210,37 @@ body[data-view="studio"] .chat-only { display: none !important; }
 .attach-hint { flex-basis: 100%; margin: 0; }
 .linkish { padding: 0; border: none; background: none; color: var(--accent); text-decoration: underline; font-size: inherit; }
 .attach-row .ref span { display: block; font-size: 11px; }
+
+/* ---------- Settings dialog sections ---------- */
+dialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+dialog h3 { font-size: 15px; margin: 22px 0 0; padding-top: 16px; border-top: 1px solid var(--border); }
+.dialog-actions.left { justify-content: flex-start; margin-top: 10px; }
+.conn.error { color: var(--danger); }
+
+/* ---------- Library ---------- */
+body[data-view="library"] .controls { display: none; }
+body[data-view="library"] .layout { grid-template-columns: 1fr; }
+.lib-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+.lib-head .hint { margin: 0; max-width: 720px; }
+.lib-head .primary { flex: none; }
+.lib-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); }
+.lib-card {
+  display: flex; gap: 12px; text-align: left; padding: 10px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius); align-items: flex-start;
+}
+.lib-card img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; flex: none; }
+.lib-card .noimg { width: 72px; height: 72px; border-radius: 8px; background: var(--bg); flex: none; }
+.lib-card strong { display: block; }
+.lib-card .hint { margin: 2px 0 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.lib-form .upload { margin-top: 6px; }
+#libEditor { width: min(560px, calc(100vw - 32px)); }
+#libEditor.drag { outline: 2px dashed var(--accent); }
+
+.lib-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.lib-chip { display: inline-flex; border: 1px solid var(--accent); border-radius: 999px; overflow: hidden; font-size: 13px; }
+.lib-chip button { border: none; border-radius: 0; padding: 3px 10px; font-size: 13px; background: transparent; color: var(--text); }
+.lib-chip button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.lib-chip button[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
+.lib-chip .ex[aria-pressed="false"] { text-decoration: none; }
+.lib-chip .ex { border-left: 1px solid var(--accent); }
+@media (max-width: 600px) { .lib-head { flex-direction: column; } }
