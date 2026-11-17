@@ -4,7 +4,7 @@ Status: **paused** (branch `wip-cloudflare-server`). The live site on `main` is 
 
 ## API keys checklist
 
-**Done (2026-11-17).** The user deleted the two exposed RunPod keys, the `claude-setup` and `image-studio-app` R2 tokens, and the deploy token. Its rejection by Cloudflare was confirmed. No Cloudflare API tokens remain. A future redeploy needs a new token from the "Edit Cloudflare Workers" template, added to the cloud environment settings as `CLOUDFLARE_API_TOKEN` (never pasted in chat) and deleted afterwards.
+**Done (2026-11-17).** The user deleted the two exposed RunPod keys, the `claude-setup` and `image-studio-app` R2 tokens, and the deploy token. Its rejection by Cloudflare was confirmed. The temporary "Edit Cloudflare Workers" token used for the 2026-11-17 redeploy was also deleted afterwards, and removed from the cloud environment settings. No Cloudflare API tokens remain. A future redeploy needs a new token from the "Edit Cloudflare Workers" template, added to the cloud environment settings as `CLOUDFLARE_API_TOKEN` (never pasted in chat) and deleted afterwards.
 
 ## Goal
 
@@ -26,18 +26,11 @@ Stop typing keys on every device. Instead:
 - **App "server mode"** (`app.js`, `cloud.js`, `index.html`): detects `/api/config` at startup, then routes RunPod calls through `/api/runpod/...` and storage through `/api/files`, saves RunPod settings with `PUT /api/config`, hides the browser-key fields, and adds **Change password** and **Sign out**. The GitHub Pages version is unchanged.
 - **Tested locally** with Miniflare (mock R2, mocked RunPod) and Playwright: login, proxy, edit-endpoint routing, file API, sync, `_config/` hidden, password change signing out other devices, sign out. All passed.
 - **Deployed (2026-11-17)** at https://image-studio.milbathepenguin.workers.dev with the `BUCKET` binding, the `SESSION_SECRET` and `PASSWORD_HASH` secrets, and preview URLs turned off. Checked live: login page, wrong password refused, sign-in, `/api/config`, `/api/files`. To redeploy: `node cloudflare/build.mjs`, then run `wrangler deploy` from a folder holding only the built `worker.js` and a `wrangler.toml` (name `image-studio`, `workers_dev = true`, `preview_urls = false`, `no_bundle = true`, R2 binding `BUCKET` → `image-studio`).
+- **Redeployed (2026-11-17)** after the Worker disappeared from the account (Cloudflare error 1042) once the API tokens were deleted. The bucket and its data were unaffected. Built with `node cloudflare/build.mjs` and deployed with `npx wrangler deploy -c cloudflare/wrangler.toml` (119 KB). Fresh secrets were set with `wrangler secret bulk`: a random `SESSION_SECRET` and a `PASSWORD_HASH` (format `pbkdf2$100000$<b64 salt>$<b64 sha256 hash>`) for a newly generated password (given to the user, not stored here; a password changed in Settings is stored in the bucket and overrides it). The secrets file was deleted afterwards. Checked live: login page, wrong password refused, sign-in, `/api/config`, `/api/files`. The user then deleted the token, signed in on their devices and confirmed the RunPod settings in Settings.
 
 ## To do
 
-0. **Redeploy (urgent).** On 2026-11-17, after the API tokens were deleted, the `image-studio` Worker disappeared from the account and the site returns Cloudflare error 1042. The bucket and its data are unaffected. A new "Edit Cloudflare Workers" token is in the environment as `CLOUDFLARE_API_TOKEN`. Steps:
-   - `node cloudflare/build.mjs`, then `npx wrangler deploy -c cloudflare/wrangler.toml`. Only `dist/worker.js` is uploaded, about 120 KB.
-   - Create fresh secrets with `wrangler secret bulk`. `SESSION_SECRET` is random. `PASSWORD_HASH` uses the format `pbkdf2$100000$<b64 salt>$<b64 sha256 hash>` for a newly generated password. Keep the secrets file in the scratchpad and delete it afterwards. If the user changed the password in Settings, that one is stored in the bucket and still applies, and the new `PASSWORD_HASH` is ignored.
-   - Check that the live site shows the login page and that sign-in works. Give the user the password and remind them to delete the token.
-
-4. **User:** sign in, then enter the RunPod key and both endpoint IDs once in Settings:
-   - main: `qn0cz6iqt4tzj6`
-   - character reference: `kql1vtdh6u4qhe`
-5. **Optional:** connect the GitHub repo to Cloudflare Workers Builds so every push redeploys automatically. Retire the GitHub Pages copy if it's no longer wanted.
+1. **Optional:** connect the GitHub repo to Cloudflare Workers Builds so every push redeploys automatically. Retire the GitHub Pages copy if it's no longer wanted.
 
 ## Current setup (for reference)
 
