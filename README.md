@@ -87,17 +87,33 @@ The site's code is public, but it contains no keys or images, and it tells searc
 
 **Prompt tips:** these models understand full sentences. Describe the subject, pose, clothing, setting, lighting, camera/lens or art medium, and mood. Keep the same **seed** and change one phrase at a time to refine an image.
 
-## Step 6 (optional upgrade): Add Z-Image Base and Chroma1-HD
+## Step 6 (optional upgrade): Add Z-Image Base, Chroma1-HD and Qwen Image Edit
 
-The `worker/Dockerfile` in this repo starts from the image you used in Step 2 and adds Z-Image Base, Chroma1-HD and Qwen Image Edit 2511 (about 57 GB more, ~90 GB total).
+The extra models (about 58 GB) live on a **network volume**: a RunPod disk that your endpoint mounts next to the image from Step 2. (Building one big image instead isn't possible: RunPod's GitHub builds are limited to 80 GB images and 30-minute builds.) A 70 GB volume costs roughly $5 a month; check the exact price on the create screen.
 
-1. RunPod → **Settings → Connections → GitHub** → connect your GitHub account and allow access to this repository.
-2. Open your endpoint → **Manage → Edit Endpoint** (or create a new endpoint and choose **GitHub Repo**).
-3. Repository: `jonathanmlanger/artgenerator`, Branch: `main`, **Dockerfile path: `worker/Dockerfile`**, Build context: `worker`.
-4. Raise **Container disk** to `120 GB`. Add a **48 GB GPU** type (e.g. L40S / A6000) as your first choice: the character reference mode needs it to run well. Then deploy. RunPod builds the image itself, which can take 30–60 minutes. The **Builds** tab shows progress.
-5. If you created a new endpoint, put its new Endpoint ID in the app's Settings.
+**6a. Create the network volume**
+1. RunPod → **Storage** → **New Network Volume**.
+2. **Datacenter:** choose one that shows good availability of **24 GB and 48 GB GPUs** (e.g. RTX 4090, L40S, A6000). Your endpoint will only run GPUs in this datacenter, so this choice matters.
+3. **Name:** `image-studio-models`. **Size:** `70` GB. Click **Create**.
 
-RunPod may rebuild when this repository changes, depending on how the GitHub integration is set up. Check the **Builds** tab after pushing website-only changes. If unwanted rebuilds happen, move `worker/` into its own repository.
+**6b. Download the models onto it (one command)**
+1. On the volume, click **Deploy** (or go to **Pods → Deploy** and select the volume under **Network Volume**). Pick the cheapest available GPU and any standard template such as **RunPod PyTorch**. This Pod is temporary.
+2. When the Pod is running, click **Connect** → **Web Terminal** (or open JupyterLab → Terminal).
+3. Paste this and press Enter:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/jonathanmlanger/artgenerator/main/worker/download-models.sh | bash
+   ```
+4. It downloads 7 files (typically 10–30 minutes) and ends with **"Done. You can now TERMINATE this Pod"**. If it stops with an error or the terminal disconnects, run the same command again; it resumes where it left off.
+5. **Terminate the Pod** (Pods → ⋮ → Terminate). The files stay on the volume, and you stop paying for the Pod.
+
+**6c. Attach the volume to your endpoint**
+1. Open your endpoint → **Manage → Edit Endpoint**.
+2. Under **Advanced** (or **Storage**), set **Network Volume** to `image-studio-models`.
+3. **GPUs:** make sure the types you select are available in the volume's datacenter. Add a **48 GB** type (L40S / A6000) as your first choice; Character / scene reference needs it to run well.
+4. Optional, for the first test: under **Environment Variables** add `NETWORK_VOLUME_DEBUG` = `true`. The worker logs then list every model it found on the volume. Remove it once everything works.
+5. **Save.** Workers restart with the volume attached.
+
+**6d. Test:** in the app, choose **Chroma1-HD** and generate. Then try Character / scene reference with two images. Cold starts are somewhat longer than before because the larger models load from the network volume.
 
 ---
 
@@ -112,7 +128,8 @@ RunPod bills per second while a worker runs, including startup and idle-timeout 
 | "RunPod rejected the API key (401)" | Re-copy the key into Settings, and make sure it has access to this endpoint. |
 | "Endpoint not found (404)" | Check the Endpoint ID (just the ID, not the full URL). |
 | Waiting for a GPU worker for many minutes | The first start downloads the image. Check the endpoint's **Workers/Logs** tabs. Add more GPU types if none are available. |
-| "The worker doesn't have this model installed" | You chose Z-Image Base or Chroma before finishing Step 6. |
+| "The worker doesn't have this model installed" | Finish Step 6, and check the endpoint has the network volume attached. Turn on `NETWORK_VOLUME_DEBUG=true` and look at the worker **Logs** to see which models it found. |
+| No GPUs available after attaching the volume | The endpoint can only use GPUs in the volume's datacenter. Edit the endpoint and tick more GPU types. |
 | "The GPU ran out of memory" | Generate fewer images at once, or add a 48 GB GPU type. |
 | "Request too large" when using references | Use fewer or smaller reference images. RunPod limits a job to 10 MB. |
 | Pose mode copies too much detail (clothing, background) | Lower Strength to 0.5–0.7, or crop the reference to just the figures. |
@@ -122,4 +139,4 @@ RunPod bills per second while a worker runs, including startup and idle-timeout 
 
 - `index.html`, `styles.css`, `app.js` — the web app
 - `workflows.js` — the ComfyUI workflows for each model (based on ComfyUI's official templates)
-- `worker/Dockerfile` — the RunPod worker image for the Step 6 upgrade
+- `worker/download-models.sh` — downloads the Step 6 models onto your network volume
