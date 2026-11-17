@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Image Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .login { max-width: 360px; margin: 14vh auto 0; padding: 0 16px; }
+    .login .panel { padding: 24px; }
+    .login h1 { margin-bottom: 4px; }
+    .login .primary { width: 100%; margin-top: 16px; }
+    .hidden-user { position: absolute; left: -9999px; }
+  </style>
+</head>
+<body>
+  <main class="login">
+    <form id="f" class="panel">
+      <h1>Image Studio</h1>
+      <p class="hint">Enter your password. This device stays signed in for a year.</p>
+      <!-- A username field lets password managers save and fill the password. -->
+      <input class="hidden-user" type="text" name="username" autocomplete="username" value="image-studio" tabindex="-1" aria-hidden="true">
+      <label for="pw">Password</label>
+      <input id="pw" type="password" name="password" autocomplete="current-password" required autofocus>
+      <button class="primary" type="submit">Sign in</button>
+      <p id="msg" class="status error" role="alert"></p>
+    </form>
+  </main>
+  <script>
+    document.getElementById("f").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("msg");
+      const btn = e.target.querySelector("button");
+      btn.disabled = true; msg.textContent = "";
+      try {
+        const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("pw").value }) });
+        if (r.ok) { location.replace("/"); return; }
+        msg.textContent = r.status === 401 ? "Wrong password." : "Sign-in failed. Try again.";
+      } catch { msg.textContent = "Couldn't reach the server."; }
+      btn.disabled = false;
+    });
+  </script>
+</body>
+</html>
