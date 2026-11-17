@@ -4,6 +4,21 @@
 // In server mode (the app is served by cloudflare/worker.js) it talks to the server's /api/files
 // instead, and needs no keys: the signed-in session cookie is enough.
 
+// fetch() that rides out a spotty connection: retries network failures and temporary server errors
+// (429, 502, 503, 504) for about a minute before giving up. Bodies must be reusable (string, Blob, ArrayBuffer).
+const RETRY_DELAYS = [1000, 2000, 4000, 8000, 15000, 15000, 15000];
+async function fetchRetry(url, opts) {
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch(url, opts);
+      if (![429, 502, 503, 504].includes(res.status) || i >= RETRY_DELAYS.length) return res;
+    } catch (e) {
+      if (i >= RETRY_DELAYS.length) throw e;
+    }
+    await new Promise((r) => setTimeout(r, RETRY_DELAYS[i]));
+  }
+}
+
 const cloud = (() => {
   const enc = new TextEncoder();
   const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -26,7 +41,7 @@ const cloud = (() => {
   async function serverRequest(method, key, { query = {}, body = null, contentType } = {}) {
     const qs = new URLSearchParams(query).toString();
     const url = key ? `/api/files/${key.split("/").map(encodeURIComponent).join("/")}` : `/api/files${qs ? "?" + qs : ""}`;
-    const res = await fetch(url, { method, headers: contentType ? { "content-type": contentType } : {}, body, credentials: "same-origin" });
+    const res = await fetchRetry(url, { method, headers: contentType ? { "content-type": contentType } : {}, body, credentials: "same-origin" });
     if (res.status === 401) { location.replace("/"); throw new Error("Signed out. Sign in again."); }
     if (!res.ok && !(method === "GET" && res.status === 404)) {
       const err = await res.json().catch(() => ({}));
@@ -60,7 +75,7 @@ const cloud = (() => {
     const h = { ...headers };
     delete h.host;
     h.authorization = `AWS4-HMAC-SHA256 Credential=${cfg.keyId}/${scope}, SignedHeaders=${signed.join(";")}, Signature=${sig}`;
-    const res = await fetch(`https://${host}${path}${qs ? "?" + qs : ""}`, { method, headers: h, body: payload });
+    const res = await fetchRetry(`https://${host}${path}${qs ? "?" + qs : ""}`, { method, headers: h, body: payload });
     if (!res.ok && !(method === "GET" && res.status === 404)) {
       const text = await res.text().catch(() => "");
       const code = (text.match(/<Code>([^<]+)/) || [])[1] || res.status;

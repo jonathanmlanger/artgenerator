@@ -195,9 +195,11 @@ function applyLoras(g, loras) {
 }
 
 // A tiny job that only exists to start a GPU worker and load the model.
-function warmupWorkflow() {
+// modelId: the model to load, so the next real job with it starts straight away.
+function warmupWorkflow(modelId = "z-image-turbo") {
   // The small 256px result is returned but the app discards it.
-  return MODELS["z-image-turbo"].build({ prompt: "warm up", width: 256, height: 256, count: 1, seed: 1, steps: 1, cfg: 1 });
+  const m = MODELS[modelId] || MODELS["z-image-turbo"];
+  return m.build({ prompt: "warm up", negative: "", width: 256, height: 256, count: 1, seed: 1, steps: 1, cfg: 1, refNames: [] });
 }
 
 const DEFAULT_NEGATIVE =

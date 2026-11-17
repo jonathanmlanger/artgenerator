@@ -38,12 +38,12 @@ async function rp(path, opts = {}, endpointOverride) {
   const endpoint = endpointOverride || creds().endpoint;
   if (!key || !endpoint) throw new Error("Open Settings and add your RunPod endpoint ID and API key.");
   const res = server
-    ? await fetch(`/api/runpod/${endpointOverride && endpointOverride === server.editEndpoint ? "edit" : "main"}${path}`, {
+    ? await fetchRetry(`/api/runpod/${endpointOverride && endpointOverride === server.editEndpoint ? "edit" : "main"}${path}`, {
       ...opts,
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
     })
-    : await fetch(`${API}/${endpoint}${path}`, {
+    : await fetchRetry(`${API}/${endpoint}${path}`, {
       ...opts,
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     });
@@ -503,9 +503,11 @@ async function wake() {
   btn.disabled = true;
   btn.classList.remove("ready");
   try {
-    const r = await runJob({ workflow: warmupWorkflow() }, (st, secs) => {
+    // Warm the GPU and model the current settings will use (character reference runs on the edit endpoint).
+    const modelId = effectiveModelId();
+    const r = await runJob({ workflow: warmupWorkflow(modelId) }, (st, secs) => {
       btn.textContent = st === "IN_QUEUE" ? `Starting GPU… ${secs}s` : "Loading model…";
-    }, false);
+    }, false, endpointFor(modelId));
     if (r.status !== "COMPLETED") throw new Error(describeFailure(r));
     btn.textContent = "GPU ready";
     btn.classList.add("ready");
