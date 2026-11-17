@@ -433,14 +433,12 @@ async function addRefs(files) {
   files = [...files].filter((f) => f.type.startsWith("image/"));
   if (!files.length) return;
   if (!(await askConsent())) return;
-  const max = REF_MODES[refMode()]?.maxImages || 1;
   for (const f of files) {
     try {
       const item = { id: `${Date.now()}${Math.floor(Math.random() * 1000)}`, dataUrl: await prepareImage(f), added: Date.now() };
-      if (max === 1) { for (const r of refs) await refDb.remove(r.id); refs = []; }
+      if (refs.length >= MAX_REFS) { setStatus(`Up to ${MAX_REFS} reference images. Remove one (×) to add another.`, true); break; }
       refs.push(item);
       await refDb.add(item);
-      while (refs.length > 3) { await refDb.remove(refs[0].id); refs.shift(); }
     } catch {
       setStatus("Couldn't read that image. Try a JPG or PNG.", true);
     }
@@ -448,29 +446,69 @@ async function addRefs(files) {
   renderRefs();
 }
 
-function renderRefs() {
-  const list = $("refList");
+const MAX_REFS = 3;
+
+// Draws reference thumbnails. In a 1-image mode only the first is used; clicking another moves it first.
+// onRemove(item) and onReorder(newList) update the caller's list.
+function drawThumbs(list, items, mode, hintEl, onRemove, onReorder, onUseAll) {
   list.textContent = "";
-  const max = REF_MODES[refMode()]?.maxImages || 1;
-  refs.forEach((r, i) => {
+  const max = REF_MODES[mode]?.maxImages || 1;
+  items.forEach((r, i) => {
+    const used = i < max;
     const d = document.createElement("div");
-    d.className = "ref";
-    d.style.opacity = i < max ? "1" : ".35";
+    d.className = "ref" + (used ? "" : " unused");
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "ref-pick";
+    pick.title = used ? (max > 1 ? `image ${i + 1}` : "This image will be used") : "Click to use this image instead";
+    pick.disabled = used;
     const img = document.createElement("img");
     img.src = r.dataUrl;
     img.alt = `Reference image ${i + 1}`;
+    pick.append(img);
+    pick.addEventListener("click", () => { if (!used) onReorder([r, ...items.filter((y) => y !== r)]); });
     const x = document.createElement("button");
     x.type = "button";
+    x.className = "ref-x";
     x.textContent = "×";
     x.title = "Remove";
     x.setAttribute("aria-label", `Remove reference image ${i + 1}`);
-    x.addEventListener("click", async () => { await refDb.remove(r.id); refs = refs.filter((y) => y !== r); renderRefs(); });
+    x.addEventListener("click", () => onRemove(r));
     const cap = document.createElement("span");
-    cap.textContent = i < max ? (max > 1 ? `image ${i + 1}` : "reference") : "not used";
-    d.append(img, x, cap);
+    cap.textContent = max > 1 ? (used ? `image ${i + 1}` : "not used") : (used ? "using" : "not used");
+    d.append(pick, x, cap);
     list.append(d);
   });
-  $("refAdd").firstChild.textContent = refs.length >= max && max === 1 ? "Replace image " : "Add image ";
+
+  hintEl.textContent = "";
+  if (items.length > max) {
+    hintEl.append(max === 1
+      ? "This mode uses one image (the first). Click another thumbnail to use it instead, or "
+      : `This mode uses up to ${max} images. `);
+    if (max === 1) {
+      const a = document.createElement("button");
+      a.type = "button";
+      a.className = "linkish";
+      a.textContent = "use all images together";
+      a.addEventListener("click", onUseAll);
+      hintEl.append(a, " (Character / scene reference, needs the Step 6 upgrade).");
+    }
+  }
+  hintEl.hidden = !hintEl.textContent;
+}
+
+function renderRefs() {
+  drawThumbs($("refList"), refs, refMode(), $("refHint"),
+    async (r) => { await refDb.remove(r.id); refs = refs.filter((y) => y !== r); renderRefs(); },
+    async (list) => {
+      // Re-save with new order so it persists.
+      const t = Date.now();
+      refs = list.map((r, i) => ({ ...r, added: t + i }));
+      for (const r of refs) await refDb.add(r);
+      renderRefs();
+    },
+    () => { $("refMode").value = "character"; store.set("ui_refmode", "character", true); applyRefMode(true); });
+  $("refAdd").hidden = refs.length >= MAX_REFS;
 }
 
 function initRefs() {
@@ -572,35 +610,28 @@ async function addChatAttachments(files) {
   if (!files.length) return;
   if (!(await askConsent())) return;
   for (const f of files) {
-    try { chatAttach.push({ id: `${Date.now()}${Math.floor(Math.random() * 1000)}`, dataUrl: await prepareImage(f) }); }
-    catch { setStatus("Couldn't read that image. Try a JPG or PNG.", true); }
+    let dataUrl;
+    try { dataUrl = await prepareImage(f); }
+    catch { setStatus("Couldn't read that image. Try a JPG or PNG.", true); continue; }
+    // Checked after the await so two quick pastes can't both slip past the limit.
+    if (chatAttach.length >= MAX_REFS) { renderAttachments(); return flashAttachHint(`Up to ${MAX_REFS} images per message. Remove one (×) to add another.`); }
+    chatAttach.push({ id: `${Date.now()}${Math.floor(Math.random() * 1000)}`, dataUrl });
   }
-  chatAttach = chatAttach.slice(-3);
   renderAttachments();
   $("chatInput").focus();
 }
 
 function renderAttachments() {
-  const list = $("attachList");
-  list.textContent = "";
   $("attachRow").hidden = !chatAttach.length;
-  const max = REF_MODES[$("chatRefMode").value].maxImages;
-  chatAttach.forEach((a, i) => {
-    const d = document.createElement("div");
-    d.className = "ref";
-    d.style.opacity = i < max ? "1" : ".35";
-    d.title = i < max ? (max > 1 ? `image ${i + 1}` : "reference") : "Not used in this mode (it takes 1 image)";
-    const img = document.createElement("img");
-    img.src = a.dataUrl;
-    img.alt = `Attached image ${i + 1}`;
-    const x = document.createElement("button");
-    x.type = "button";
-    x.textContent = "×";
-    x.setAttribute("aria-label", `Remove attached image ${i + 1}`);
-    x.addEventListener("click", () => { chatAttach = chatAttach.filter((y) => y !== a); renderAttachments(); });
-    d.append(img, x);
-    list.append(d);
-  });
+  drawThumbs($("attachList"), chatAttach, $("chatRefMode").value, $("attachHint"),
+    (a) => { chatAttach = chatAttach.filter((y) => y !== a); renderAttachments(); },
+    (list) => { chatAttach = list; renderAttachments(); },
+    () => { $("chatRefMode").value = "character"; store.set("ui_chatmode", "character", true); renderAttachments(); });
+}
+function flashAttachHint(msg) {
+  const h = $("attachHint");
+  h.textContent = msg;
+  h.hidden = false;
 }
 
 async function sendChat(retryOf) {
@@ -756,7 +787,8 @@ function scrollThread() { requestAnimationFrame(() => { const t = $("thread"); t
 async function editInChat(item) {
   if (view !== "chat") setView("chat");
   if (!(await askConsent())) return;
-  chatAttach = [{ id: `${Date.now()}`, dataUrl: await prepareImage(item.blob) }];
+  if (chatAttach.length >= MAX_REFS) chatAttach.shift();
+  chatAttach.push({ id: `${Date.now()}`, dataUrl: await prepareImage(item.blob) });
   renderAttachments();
   const input = $("chatInput");
   input.focus();

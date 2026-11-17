@@ -39,6 +39,7 @@
       <div id="refWrap" class="ref-wrap" hidden>
         <p id="refNote" class="hint"></p>
         <div id="refList" class="refs"></div>
+        <p id="refHint" class="hint attach-hint" hidden></p>
         <label id="refAdd" class="button ghost upload">Add image
           <input id="refFile" type="file" accept="image/*" multiple hidden>
         </label>
@@ -111,7 +112,8 @@
         <form id="composer" class="composer">
           <div id="attachRow" class="attach-row" hidden>
             <div id="attachList" class="refs"></div>
-            <select id="chatRefMode" aria-label="What to do with the attached image"></select>
+            <select id="chatRefMode" aria-label="What to do with the attached images"></select>
+            <p id="attachHint" class="hint attach-hint" hidden></p>
           </div>
           <div class="composer-row">
             <label class="icon-btn" title="Attach image" aria-label="Attach image">+
