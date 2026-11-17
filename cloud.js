@@ -58,16 +58,24 @@ const cloud = (() => {
     async get(key) { const r = await request("GET", key); return r.status === 404 ? null : r; },
     del: (key) => request("DELETE", key),
     async list(prefix) {
-      const keys = [];
+      return (await this.listDetailed(prefix)).map((o) => o.key);
+    },
+    // Returns [{ key, size }] for every object under prefix.
+    async listDetailed(prefix) {
+      const out = [];
       let token;
       do {
         const q = { "list-type": "2", prefix, "max-keys": "1000" };
         if (token) q["continuation-token"] = token;
         const xml = await (await request("GET", "", { query: q })).text();
-        for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) keys.push(m[1].replace(/&amp;/g, "&"));
+        for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+          const key = (m[1].match(/<Key>([^<]+)<\/Key>/) || [])[1];
+          const size = Number((m[1].match(/<Size>(\d+)<\/Size>/) || [])[1] || 0);
+          if (key) out.push({ key: key.replace(/&amp;/g, "&"), size });
+        }
         token = (xml.match(/<NextContinuationToken>([^<]+)/) || [])[1];
       } while (token);
-      return keys;
+      return out;
     },
   };
 })();

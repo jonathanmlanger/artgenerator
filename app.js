@@ -173,6 +173,7 @@ function syncAll() {
       const changed = [];
       for (const st of [db, refDb, chatDb, libDb]) if (await st.sync()) changed.push(st.name);
       lastSync = Date.now();
+      await checkStorage();
       syncStatus.ok();
       if (changed.length) await reloadAfterSync(changed);
     } catch (e) {
@@ -183,6 +184,28 @@ function syncAll() {
     }
   })();
   return syncing;
+}
+
+// ---------- Storage meter ----------
+// Cloudflare R2's free tier includes 10 GB; beyond that it's about $0.015 per GB per month.
+const FREE_GB = 10;
+let storageBytes = null;
+async function checkStorage() {
+  try { storageBytes = (await cloud.listDetailed("")).reduce((t, o) => t + o.size, 0); } catch { return; }
+  store.set("cloud_bytes", String(storageBytes), true);
+  showStorage();
+}
+function showStorage() {
+  const b = storageBytes ?? Number(store.get("cloud_bytes") || NaN);
+  const el = $("storageWarn");
+  if (!cloud.configured() || !Number.isFinite(b)) { el.hidden = true; $("storageUse").textContent = ""; return; }
+  const gb = b / 1e9, pct = Math.round((gb / FREE_GB) * 100);
+  $("storageUse").textContent = `Cloud storage used: ${gb < 0.1 ? (b / 1e6).toFixed(0) + " MB" : gb.toFixed(2) + " GB"} of ${FREE_GB} GB free (${pct}%).`;
+  let msg = "";
+  if (gb >= FREE_GB) msg = `Cloud storage is ${gb.toFixed(1)} GB, past the ${FREE_GB} GB free tier. Cloudflare now charges about $${(Math.max(0, gb - FREE_GB) * 0.015).toFixed(2)}/month. Delete images you don't need, or export a backup and clear old ones.`;
+  else if (gb >= FREE_GB * 0.8) msg = `Cloud storage is ${pct}% full (${gb.toFixed(1)} of ${FREE_GB} GB free). Consider deleting images you don't need.`;
+  el.textContent = msg;
+  el.hidden = !msg;
 }
 
 function cloudCreds() {
@@ -1156,6 +1179,7 @@ function initSettings() {
       await syncAll();
       const n = (await db.all()).length, l = (await libDb.all()).length;
       out.textContent = `Synced. ${n} gallery image${n === 1 ? "" : "s"} and ${l} library entr${l === 1 ? "y" : "ies"} on this device.`;
+      showStorage();
     } catch (e) {
       out.textContent = cloudErrorHelp(e);
       out.classList.add("error");
@@ -1167,6 +1191,7 @@ function initSettings() {
     applyCloudCreds();
     syncStatus.set("");
     updateStorageHint();
+    showStorage();
     $("syncResult").textContent = "Sync turned off on this device. Your images stay here and in the bucket.";
   });
   $("exportBtn").addEventListener("click", exportBackup);
@@ -1306,6 +1331,7 @@ function setBusy(b) {
 
 // ---------- wire up ----------
 applyCloudCreds();
+showStorage();
 initControls();
 initRefs();
 initChat();
