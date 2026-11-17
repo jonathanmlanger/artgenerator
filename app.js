@@ -14,7 +14,21 @@ const store = {
   },
   del(k) { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch {} },
 };
-const creds = () => ({ key: store.get("rp_key") || "", endpoint: store.get("rp_endpoint") || "", editEndpoint: store.get("rp_edit_endpoint") || "" });
+// Server mode: when the app is served by cloudflare/worker.js, the RunPod key and endpoint IDs live on
+// the server (set once in Settings) and every RunPod and storage call goes through it. Nothing secret
+// is kept in the browser. Holds { runpodKeySet, endpoint, editEndpoint } from GET /api/config.
+let server = null;
+async function detectServer() {
+  if (location.protocol === "file:") return;
+  try {
+    const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
+    const c = r.ok && /json/.test(r.headers.get("content-type") || "") ? await r.json() : null;
+    if (c?.server) server = c;
+  } catch {}
+}
+const creds = () => server
+  ? { key: server.runpodKeySet ? "(saved on server)" : "", endpoint: server.endpoint, editEndpoint: server.editEndpoint }
+  : { key: store.get("rp_key") || "", endpoint: store.get("rp_endpoint") || "", editEndpoint: store.get("rp_edit_endpoint") || "" };
 // Character / scene reference (Qwen Image Edit) can run on its own endpoint so each GPU worker
 // only holds one set of large models; it falls back to the main endpoint if none is set.
 const endpointFor = (modelId) => (modelId === "qwen-edit" && creds().editEndpoint) || creds().endpoint;
@@ -23,13 +37,21 @@ async function rp(path, opts = {}, endpointOverride) {
   const { key } = creds();
   const endpoint = endpointOverride || creds().endpoint;
   if (!key || !endpoint) throw new Error("Open Settings and add your RunPod endpoint ID and API key.");
-  const res = await fetch(`${API}/${endpoint}${path}`, {
-    ...opts,
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-  });
+  const res = server
+    ? await fetch(`/api/runpod/${endpointOverride && endpointOverride === server.editEndpoint ? "edit" : "main"}${path}`, {
+      ...opts,
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+    })
+    : await fetch(`${API}/${endpoint}${path}`, {
+      ...opts,
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    });
   const text = await res.text();
   let body; try { body = JSON.parse(text); } catch { body = { raw: text }; }
   if (!res.ok) {
+    if (server && res.status === 401 && body.error === "Not signed in") { location.replace("/"); throw new Error("Signed out. Sign in again."); }
+    if (server && res.status === 400 && body.error) throw new Error(body.error);
     if (res.status === 401) throw new Error("RunPod rejected the API key (401). Check it in Settings.");
     if (res.status === 404) throw new Error("Endpoint not found (404). Check the endpoint ID in Settings.");
     throw new Error(`RunPod error ${res.status}: ${body.error || body.raw || text}`);
@@ -214,6 +236,7 @@ function cloudCreds() {
 }
 // Accepts the full S3 URL Cloudflare shows (https://<account>.r2.cloudflarestorage.com) or just the account ID.
 function applyCloudCreds() {
+  if (server) { cloud.configureServer(); return; }
   const c = cloudCreds();
   const account = (c.endpoint.match(/([0-9a-f]{32})/i) || [])[1] || "";
   cloud.configure(account && c.keyId && c.secret ? { account, bucket: c.bucket, keyId: c.keyId, secret: c.secret } : null);
@@ -1158,7 +1181,9 @@ function initSettings() {
     const c = creds();
     $("endpointId").value = c.endpoint;
     $("editEndpointId").value = c.editEndpoint;
-    $("apiKey").value = c.key;
+    $("apiKey").value = server ? "" : c.key;
+    if (server) $("apiKey").placeholder = server.runpodKeySet ? "Saved on the server. Leave blank to keep it." : "rpa_…";
+    $("pwCurrent").value = ""; $("pwNew").value = ""; $("pwResult").textContent = "";
     $("testResult").textContent = "";
     const cc = cloudCreds();
     $("r2Endpoint").value = cc.endpoint;
@@ -1196,16 +1221,18 @@ function initSettings() {
   });
   $("exportBtn").addEventListener("click", exportBackup);
   $("importFile").addEventListener("change", (e) => { importBackup(e.target.files[0]); e.target.value = ""; });
-  dlg.addEventListener("close", () => {
-    if (dlg.returnValue === "save") saveCreds();
+  dlg.addEventListener("close", async () => {
+    if (dlg.returnValue === "save") {
+      try { await saveCreds(); } catch (e) { setStatus("Couldn't save settings: " + (e.message || e), true); }
+    }
     updateConn();
   });
   $("testConn").addEventListener("click", async () => {
-    saveCreds();
     const out = $("testResult");
     out.classList.remove("error");
     out.textContent = "Testing…";
     try {
+      await saveCreds();
       const h = await rp("/health");
       const w = h.workers || {};
       out.textContent = `Connected. Workers — idle: ${w.idle ?? 0}, running: ${w.running ?? 0}, initializing: ${w.initializing ?? 0}. Jobs in queue: ${h.jobs?.inQueue ?? 0}.`;
@@ -1222,9 +1249,50 @@ function initSettings() {
     $("testResult").textContent = "Key removed from this browser.";
     updateConn();
   });
+  $("pwChange").addEventListener("click", async () => {
+    const out = $("pwResult");
+    out.classList.remove("error");
+    out.textContent = "Changing…";
+    try {
+      const r = await fetch("/api/password", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current: $("pwCurrent").value, next: $("pwNew").value }) });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b.error || `Error ${r.status}`);
+      $("pwCurrent").value = ""; $("pwNew").value = "";
+      out.textContent = "Password changed. Other devices are signed out; this one stays signed in.";
+    } catch (e) { out.textContent = e.message; out.classList.add("error"); }
+  });
+  $("signOut").addEventListener("click", async () => {
+    if (!confirm("Sign out of this device?")) return;
+    try { await fetch("/api/logout", { method: "POST", credentials: "same-origin" }); } catch {}
+    location.replace("/");
+  });
+}
+
+// Shows the parts of Settings that apply to how the app is being served.
+function applyServerUi() {
+  if (!server) return;
+  for (const id of ["rememberRow", "r2Fields", "forget"]) $(id).hidden = true;
+  $("serverAccount").hidden = false;
+  $("keyHint").textContent = "Saved privately on your server, so you only enter them once for all your devices. They are never stored in this browser.";
+  $("cloudTitle").textContent = "Storage";
+  $("cloudHint").textContent = "Your gallery, chats, reference images and library are kept on your server and appear on every device you sign in on.";
+}
+
+async function saveServerCreds() {
+  const body = { endpoint: $("endpointId").value.trim(), editEndpoint: $("editEndpointId").value.trim() };
+  const key = $("apiKey").value.trim();
+  if (key) body.runpodKey = key;
+  const r = await fetch("/api/config", { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 401) { location.replace("/"); throw new Error("Signed out. Sign in again."); }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Error ${r.status}`);
+  await detectServer();
+  $("apiKey").value = "";
+  $("apiKey").placeholder = server.runpodKeySet ? "Saved on the server. Leave blank to keep it." : "rpa_…";
 }
 
 function saveCreds() {
+  if (server) return saveServerCreds();
   const remember = $("remember").checked;
   store.set("rp_endpoint", $("endpointId").value.trim(), remember);
   store.set("rp_edit_endpoint", $("editEndpointId").value.trim(), remember);
@@ -1330,18 +1398,23 @@ function setBusy(b) {
 }
 
 // ---------- wire up ----------
-applyCloudCreds();
-showStorage();
-initControls();
-initRefs();
-initChat();
-initLibrary();
-updateStorageHint();
-setView(store.get("ui_view") || "chat");
-initSettings();
-updateConn();
-renderGallery();
-syncAll().catch(() => {});
+(async () => {
+  await detectServer();
+  applyCloudCreds();
+  showStorage();
+  initControls();
+  initRefs();
+  initChat();
+  initLibrary();
+  updateStorageHint();
+  setView(store.get("ui_view") || "chat");
+  initSettings();
+  applyServerUi();
+  updateConn();
+  renderGallery();
+  syncAll().catch(() => {});
+  if (!creds().key) setStatus("Start by opening Settings to connect your RunPod endpoint.");
+})();
 // Pick up changes from other devices when you come back to this tab.
 window.addEventListener("focus", () => { if (Date.now() - lastSync > 60000) syncAll().catch(() => {}); });
 $("generate").addEventListener("click", generate);
@@ -1360,4 +1433,3 @@ $("vDelete").addEventListener("click", async () => {
   if (view === "chat") renderThread(); // removed images show as deleted
 });
 $("viewer").addEventListener("click", (e) => { if (e.target === $("viewer")) $("viewer").close(); });
-if (!creds().key) setStatus("Start by opening Settings to connect your RunPod endpoint.");

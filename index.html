@@ -155,11 +155,12 @@
       <input id="editEndpointId" autocomplete="off" spellcheck="false" placeholder="uses the main endpoint if empty">
       <label for="apiKey">RunPod API key</label>
       <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="rpa_…">
-      <label class="check"><input id="remember" type="checkbox" checked> Remember on this device</label>
-      <p class="hint">Your keys are stored only in this browser and sent only to RunPod and Cloudflare. They are never part of the website's code.</p>
+      <label class="check" id="rememberRow"><input id="remember" type="checkbox" checked> Remember on this device</label>
+      <p class="hint" id="keyHint">Your keys are stored only in this browser and sent only to RunPod and Cloudflare. They are never part of the website's code.</p>
 
-      <h3>Cloud sync <span class="hint-inline">(optional, Cloudflare R2)</span></h3>
-      <p class="hint">Keeps your gallery, chats, reference images and library in your private R2 bucket, so they appear on every device you set up.</p>
+      <h3 id="cloudTitle">Cloud sync <span class="hint-inline">(optional, Cloudflare R2)</span></h3>
+      <p class="hint" id="cloudHint">Keeps your gallery, chats, reference images and library in your private R2 bucket, so they appear on every device you set up.</p>
+      <div id="r2Fields">
       <label for="r2Endpoint">S3 endpoint URL</label>
       <input id="r2Endpoint" autocomplete="off" spellcheck="false" placeholder="https://<account-id>.r2.cloudflarestorage.com">
       <label for="r2Bucket">Bucket</label>
@@ -172,8 +173,23 @@
         <button id="syncNow" type="button" class="ghost">Save &amp; sync now</button>
         <button id="syncOff" type="button" class="ghost danger">Turn off sync</button>
       </div>
+      </div>
       <p id="storageUse" class="hint"></p>
       <p id="syncResult" class="status"></p>
+
+      <div id="serverAccount" hidden>
+        <h3>Password</h3>
+        <p class="hint">Changing the password signs out every other device.</p>
+        <label for="pwCurrent">Current password</label>
+        <input id="pwCurrent" type="password" autocomplete="current-password">
+        <label for="pwNew">New password <span class="hint-inline">(at least 12 characters)</span></label>
+        <input id="pwNew" type="password" autocomplete="new-password">
+        <div class="dialog-actions left">
+          <button id="pwChange" type="button" class="ghost">Change password</button>
+          <button id="signOut" type="button" class="ghost danger">Sign out of this device</button>
+        </div>
+        <p id="pwResult" class="status"></p>
+      </div>
 
       <h3>Backup</h3>
       <div class="dialog-actions left">

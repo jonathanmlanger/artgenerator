@@ -1,6 +1,8 @@
 "use strict";
 // Minimal S3-compatible client for Cloudflare R2, signed in the browser (AWS Signature Version 4).
 // Credentials come from Settings and are stored only in this browser.
+// In server mode (the app is served by cloudflare/worker.js) it talks to the server's /api/files
+// instead, and needs no keys: the signed-in session cookie is enough.
 
 const cloud = (() => {
   const enc = new TextEncoder();
@@ -14,14 +16,29 @@ const cloud = (() => {
   const encPath = (p) => p.split("/").map((s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())).join("/");
   const encQ = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 
-  let cfg = null; // { account, bucket, keyId, secret }
+  let cfg = null; // { account, bucket, keyId, secret } or { server: true }
   function configure(c) {
     cfg = c && c.account && c.bucket && c.keyId && c.secret ? c : null;
   }
+  const configureServer = () => { cfg = { server: true }; };
   const configured = () => !!cfg;
 
-  async function request(method, key, { query = {}, body = null, contentType } = {}) {
+  async function serverRequest(method, key, { query = {}, body = null, contentType } = {}) {
+    const qs = new URLSearchParams(query).toString();
+    const url = key ? `/api/files/${key.split("/").map(encodeURIComponent).join("/")}` : `/api/files${qs ? "?" + qs : ""}`;
+    const res = await fetch(url, { method, headers: contentType ? { "content-type": contentType } : {}, body, credentials: "same-origin" });
+    if (res.status === 401) { location.replace("/"); throw new Error("Signed out. Sign in again."); }
+    if (!res.ok && !(method === "GET" && res.status === 404)) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`Server storage error (${err.error || res.status})`);
+    }
+    return res;
+  }
+
+  async function request(method, key, opts = {}) {
     if (!cfg) throw new Error("Cloud sync is not set up.");
+    if (cfg.server) return serverRequest(method, key, opts);
+    const { query = {}, body = null, contentType } = opts;
     const host = `${cfg.account}.r2.cloudflarestorage.com`;
     const path = `/${cfg.bucket}${key ? "/" + encPath(key) : ""}`;
     const qs = Object.keys(query).sort().map((k) => `${encQ(k)}=${encQ(query[k])}`).join("&");
@@ -53,7 +70,8 @@ const cloud = (() => {
   }
 
   return {
-    configure, configured,
+    configure, configureServer, configured,
+    isServer: () => !!cfg?.server,
     put: (key, body, contentType) => request("PUT", key, { body, contentType }),
     async get(key) { const r = await request("GET", key); return r.status === 404 ? null : r; },
     del: (key) => request("DELETE", key),
@@ -62,6 +80,7 @@ const cloud = (() => {
     },
     // Returns [{ key, size }] for every object under prefix.
     async listDetailed(prefix) {
+      if (cfg?.server) return (await request("GET", "", { query: { prefix } })).json();
       const out = [];
       let token;
       do {
