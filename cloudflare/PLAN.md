@@ -29,6 +29,11 @@ Stop typing keys on every device. Instead:
 
 ## To do
 
+0. **Redeploy (urgent).** On 2026-11-17, after the API tokens were deleted, the `image-studio` Worker disappeared from the account and the site returns Cloudflare error 1042. The bucket and its data are unaffected. A new "Edit Cloudflare Workers" token is in the environment as `CLOUDFLARE_API_TOKEN`. Steps:
+   - `node cloudflare/build.mjs`, then `npx wrangler deploy -c cloudflare/wrangler.toml`. Only `dist/worker.js` is uploaded, about 120 KB.
+   - Create fresh secrets with `wrangler secret bulk`. `SESSION_SECRET` is random. `PASSWORD_HASH` uses the format `pbkdf2$100000$<b64 salt>$<b64 sha256 hash>` for a newly generated password. Keep the secrets file in the scratchpad and delete it afterwards. If the user changed the password in Settings, that one is stored in the bucket and still applies, and the new `PASSWORD_HASH` is ignored.
+   - Check that the live site shows the login page and that sign-in works. Give the user the password and remind them to delete the token.
+
 4. **User:** sign in, then enter the RunPod key and both endpoint IDs once in Settings:
    - main: `qn0cz6iqt4tzj6`
    - character reference: `kql1vtdh6u4qhe`

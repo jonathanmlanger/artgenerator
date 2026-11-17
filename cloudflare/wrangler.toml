@@ -1,0 +1,13 @@
+# Deploy: node cloudflare/build.mjs && npx wrangler deploy -c cloudflare/wrangler.toml
+# Secrets (set once per new Worker): SESSION_SECRET, PASSWORD_HASH. See PLAN.md.
+name = "image-studio"
+main = "dist/worker.js"
+compatibility_date = "2025-01-01"
+no_bundle = true
+workers_dev = true
+preview_urls = false
+account_id = "4caba5a36ea3aac5a64da8a547c5300a"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "image-studio"
