@@ -32,9 +32,23 @@ Stop typing keys on every device. Instead:
 
 ## To do
 
-1. **Finish the LoRA add-ons.** The Worker part is deployed (see Done). Still to do: delete the "Edit Cloudflare Workers" token used for that deploy and remove `CLOUDFLARE_API_TOKEN` from the cloud environment settings. Run `worker/download-loras.sh` on a temporary Pod with the network volume, with a Civitai API key in `CIVITAI_TOKEN` for the rope/cleave gag LoRA (README, Step 7). Then test both LoRAs on Z-Image Base and Turbo. If they work, consider more: shibari and chest-harness rope ties (staying away from X-rated LoRAs).
-2. **Consider a longer RunPod idle timeout** (RunPod → Serverless → each endpoint → Edit → Idle timeout). At 60 s, a worker shuts down if the next request comes more than a minute after the last image, so each request cold-starts again. 3–5 minutes keeps it warm between prompts; idle time is billed.
-3. **Optional:** connect the GitHub repo to Cloudflare Workers Builds so every push redeploys automatically. Retire the GitHub Pages copy if it's no longer wanted.
+### Start here next time: get the LoRAs working (this decides whether the project continues)
+
+1. **Safety first:** if not done yet, delete the "Edit Cloudflare Workers" token and remove `CLOUDFLARE_API_TOKEN` from the cloud environment settings. (A new one is only needed for the next deploy.)
+2. **Get a Civitai API key** (civitai.com → Account settings → API Keys). Needed for the rope/cleave gag LoRA.
+3. **Start a temporary Pod with the network volume:** RunPod → Storage → `image-studio-models` → **Deploy**. It must run in the volume's datacenter (US-TX-3); any cheap GPU will do, since it only downloads files. *This is the step that hasn't worked yet:* if it fails, note the exact error or what the screen shows (e.g. no GPUs available), and bring that to the next session.
+4. **In the Pod's web terminal**, run (leading space keeps the key out of history):
+   ```bash
+    export CIVITAI_TOKEN=your_key_here
+   curl -fsSL https://raw.githubusercontent.com/jonathanmlanger/artgenerator/wip-cloudflare-server/worker/download-loras.sh | bash
+   ```
+   Wait for it to finish (checksums verified), then **terminate the Pod**.
+5. **Test in the app** (https://image-studio.milbathepenguin.workers.dev): Z-Image Base, then Turbo, with each LoRA ticked at 0.8. Try a few seeds and strengths (0.6–1.0).
+6. **Decide:** if results are realistic enough, continue (more rope-tie LoRAs, no X-rated ones). If not, move on.
+
+### Later
+- **Longer RunPod idle timeout** (RunPod → Serverless → each endpoint → Edit → Idle timeout, 3–5 min) so the GPU stays warm between prompts. Idle time is billed.
+- **Optional:** connect the GitHub repo to Cloudflare Workers Builds so every push redeploys automatically. Retire the GitHub Pages copy if it's no longer wanted.
 
 ## Current setup (for reference)
 
