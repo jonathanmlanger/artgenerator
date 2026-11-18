@@ -36,13 +36,16 @@ Stop typing keys on every device. Instead:
 
 1. **Token check (done 2026-11-18):** Cloudflare rejects the old token ("Invalid API Token"), so it is deleted. Its value may still sit in the cloud environment settings as `CLOUDFLARE_API_TOKEN`; remove it when convenient (harmless, it no longer works).
 2. **Get a Civitai API key** (civitai.com → Account settings → API Keys). Needed for the rope/cleave gag LoRA.
-3. **Start a temporary Pod with the network volume:** RunPod → Storage → `image-studio-models` → **Deploy**. It must run in the volume's datacenter (US-TX-3); any cheap GPU will do, since it only downloads files. *This is the step that hasn't worked yet:* if it fails, note the exact error or what the screen shows (e.g. no GPUs available), and bring that to the next session.
-4. **In the Pod's web terminal**, run (leading space keeps the key out of history):
-   ```bash
-    export CIVITAI_TOKEN=your_key_here
-   curl -fsSL https://raw.githubusercontent.com/jonathanmlanger/artgenerator/wip-cloudflare-server/worker/download-loras.sh | bash
-   ```
-   Wait for it to finish (checksums verified), then **terminate the Pod**.
+3. **Pods have had no capacity (2026-11-17 and 18), but serverless has.** So install the LoRAs from the serverless worker itself, as it starts up. (RunPod's S3 upload API isn't available in US-TX-3, so that route is out.)
+   - RunPod → Serverless → main endpoint (`qn0cz6iqt4tzj6`) → **Manage → Edit Endpoint**.
+   - Add an environment variable `CIVITAI_TOKEN` = the Civitai key (or a RunPod Secret referenced as `{{ RUNPOD_SECRET_<name> }}`).
+   - Set **Container Start Command** to:
+     `bash -c "curl -fsSL https://raw.githubusercontent.com/jonathanmlanger/artgenerator/wip-cloudflare-server/worker/download-loras.sh | bash -s /runpod-volume; exec /start.sh"`
+   - Save, then press **Wake up GPU** in the app (Z-Image Turbo selected). The new worker downloads the two LoRAs onto the volume, then starts normally. The endpoint's **Logs** show the script output ("already downloaded" / checksum errors).
+   - Afterwards **clear the start command and remove `CIVITAI_TOKEN`** (otherwise every cold start re-checks the files, which is slower).
+   - If the worker fails to start, clear the start command; `/start.sh` is assumed to be the image's default command (`runpod/worker-comfyui`), check the Docker image's docs if not.
+   - Fallback: a Pod in US-TX-3 (GPU, or a CPU Pod if the deploy page offers one with the volume) running the script as in the README.
+4. (Merged into 3.)
 5. **Test in the app** (https://image-studio.milbathepenguin.workers.dev): Z-Image Base, then Turbo, with each LoRA ticked at 0.8. Try a few seeds and strengths (0.6–1.0).
 6. **Decide:** if results are realistic enough, continue (more rope-tie LoRAs, no X-rated ones). If not, move on.
 
