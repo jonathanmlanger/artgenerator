@@ -34,7 +34,7 @@ Stop typing keys on every device. Instead:
 
 ### Start here next time: get the LoRAs working (this decides whether the project continues)
 
-1. **Safety first:** if not done yet, delete the "Edit Cloudflare Workers" token and remove `CLOUDFLARE_API_TOKEN` from the cloud environment settings. (A new one is only needed for the next deploy.)
+1. **Token check (done 2026-11-18):** Cloudflare rejects the old token ("Invalid API Token"), so it is deleted. Its value may still sit in the cloud environment settings as `CLOUDFLARE_API_TOKEN`; remove it when convenient (harmless, it no longer works).
 2. **Get a Civitai API key** (civitai.com → Account settings → API Keys). Needed for the rope/cleave gag LoRA.
 3. **Start a temporary Pod with the network volume:** RunPod → Storage → `image-studio-models` → **Deploy**. It must run in the volume's datacenter (US-TX-3); any cheap GPU will do, since it only downloads files. *This is the step that hasn't worked yet:* if it fails, note the exact error or what the screen shows (e.g. no GPUs available), and bring that to the next session.
 4. **In the Pod's web terminal**, run (leading space keeps the key out of history):
