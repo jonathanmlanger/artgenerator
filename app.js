@@ -349,7 +349,7 @@ function activeLoras(modelId) {
   const st = loraState();
   return Object.entries(LORAS)
     .filter(([id, l]) => l.models.includes(modelId) && loraSettings(id, st).on)
-    .map(([id, l]) => ({ id, label: l.label, file: l.file, strength: loraSettings(id, st).strength }));
+    .map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: loraSettings(id, st).strength }));
 }
 function renderLoras() {
   const modelId = effectiveModelId();
@@ -532,7 +532,7 @@ async function cancel() {
 function describeFailure(r) {
   const err = r.error || r.output?.error || "";
   const msg = typeof err === "string" ? err : JSON.stringify(err);
-  const missingLora = Object.values(LORAS).find((l) => msg.includes(l.file));
+  const missingLora = Object.values(LORAS).find((l) => [l.file, ...Object.values(l.files || {})].some((f) => f && msg.includes(f)));
   if (missingLora && /not in list|value_not_in_list|lora_name/i.test(msg)) {
     return `The worker doesn't have the “${missingLora.label}” LoRA installed. Run worker/download-loras.sh on a Pod with the network volume attached (see the guide), or untick it.\n\nDetails: ` + msg.slice(0, 300);
   }

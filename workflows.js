@@ -154,7 +154,7 @@ function applyReference(g, s) {
 
 // LoRA add-ons: small files that teach a model a concept (a pose, prop or style).
 // Files live in models/loras on the network volume; worker/download-loras.sh downloads them.
-// models: the MODELS ids each LoRA works with. Only one of those can use it.
+// models: the MODELS ids each LoRA works with. file: one file for all of them, or files: { modelId: file }.
 const LORAS = {
   "rope-cleave": {
     label: "Rope bondage + cleave gag",
@@ -172,7 +172,21 @@ const LORAS = {
     note: "Include “gagged with a ball gag” in the prompt; you can name a colour. Made for Z-Image Turbo.",
     source: "https://civitai.com/models/999177",
   },
+  "hogtie": {
+    label: "Hogtie",
+    // Separate Turbo and Base versions of the same LoRA.
+    files: { "z-image-turbo": "hogtie_zit.safetensors", "z-image-base": "hogtie_zib.safetensors" },
+    models: ["z-image-turbo", "z-image-base"],
+    strength: 0.8,
+    note: "Lying on the stomach, wrists and ankles tied together behind the back. Describe the rope colour, clothes, shoes or bare feet and the gag (ball or cloth) in plain sentences.",
+    source: "https://civitai.com/models/2267371",
+  },
 };
+
+// The LoRA file to load for a model: per-model files win over the shared one.
+function loraFile(l, modelId) {
+  return l.files?.[modelId] || l.file;
+}
 
 // Chains LoRA loaders onto the diffusion model (node "1") and points everything that used it at the last one.
 // loras: [{ file, strength }]
