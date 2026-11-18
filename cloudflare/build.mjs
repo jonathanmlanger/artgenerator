@@ -15,7 +15,8 @@ const files = {
 };
 const assets = Object.fromEntries(Object.entries(files).map(([k, p]) => [k, readFileSync(p, "utf8")]));
 const src = readFileSync(join(here, "worker.js"), "utf8")
-  .replace("/* ASSETS_PLACEHOLDER */", `const ASSETS = ${JSON.stringify(assets)};`);
+  // A function replacement, so "$&" / "$$" in the app code are kept as written.
+  .replace("/* ASSETS_PLACEHOLDER */", () => `const ASSETS = ${JSON.stringify(assets)};`);
 mkdirSync(join(here, "dist"), { recursive: true });
 writeFileSync(join(here, "dist", "worker.js"), src);
 console.log(`Built cloudflare/dist/worker.js (${(src.length / 1024).toFixed(0)} KB)`);
