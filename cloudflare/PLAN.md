@@ -44,6 +44,7 @@ Stop typing keys on every device. Instead:
    - Save, then press **Wake up GPU** in the app (Z-Image Turbo selected). The new worker downloads the two LoRAs onto the volume, then starts normally. The endpoint's **Logs** show the script output ("already downloaded" / checksum errors).
    - Afterwards **clear the start command and remove `CIVITAI_TOKEN`** (otherwise every cold start re-checks the files, which is slower).
    - If the worker fails to start, clear the start command; `/start.sh` is assumed to be the image's default command (`runpod/worker-comfyui`), check the Docker image's docs if not.
+   - **Claude can do this step itself** if the cloud environment has `RUNPOD_API_KEY` (a RunPod key with write access; delete it afterwards) and `CIVITAI_TOKEN` set (environment settings → Network secrets or environment variables; never pasted in chat). Start a new session and ask it to "do step 3 in cloudflare/PLAN.md". This container reaches `api.runpod.io` (GraphQL) and `civitai.com`; `rest.runpod.io` did not answer.
    - Fallback: a Pod in US-TX-3 (GPU, or a CPU Pod if the deploy page offers one with the volume) running the script as in the README.
 4. (Merged into 3.)
 5. **Test in the app** (https://image-studio.milbathepenguin.workers.dev): Z-Image Base, then Turbo, with each LoRA ticked at 0.8. Try a few seeds and strengths (0.6–1.0).
