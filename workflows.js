@@ -156,6 +156,16 @@ function applyReference(g, s) {
 // Files live in models/loras on the network volume; worker/download-loras.sh downloads them.
 // models: the MODELS ids each LoRA works with. file: one file for all of them, or files: { modelId: file }.
 const LORAS = {
+  "rope-bound": {
+    label: "Rope bound",
+    files: { "z-image-turbo": "rope_bound_zit.safetensors", "z-image-base": "rope_bound_zib.safetensors" },
+    models: ["z-image-turbo", "z-image-base"],
+    strength: 0.8,
+    note: "General rope bondage: ropes around the torso, wrists, ankles and legs, sitting, standing, lying or tied to a chair. Describe the rope colour and where it goes. Works best on Z-Image Base.",
+    source: "https://civitai.com/models/2203450",
+    // General words only count when no pose LoRA (like hogtie) was picked, which draws its own ropes.
+    generalKeywords: /\b(rope[sd]?|roped|tied|bound|bondage|restrained|tied up)\b/i,
+  },
   "rope-cleave": {
     label: "Rope bondage + cleave gag",
     file: "rope_cleave_gag_zib.safetensors",
@@ -163,18 +173,28 @@ const LORAS = {
     strength: 0.8,
     note: "Ropework (chest harness, wrists, ankles, arms behind the back) and cloth cleave gags. Describe the ropes, colours and position in plain sentences. Made for Z-Image Base; also works on Turbo.",
     source: "https://civitai.com/models/2532774",
-    keywords: /\b(shibari|cleave[- ]?gag(ged)?)\b/i,
-    // General words only count when no pose LoRA (like hogtie) was picked, which draws its own ropes.
-    generalKeywords: /\b(rope[sd]?|tied|bound|bondage|restrained)\b/i,
+    keywords: /\b(shibari|cleave[- ]?gag(ged)?|chest harness)\b/i,
+  },
+  "ball-gags": {
+    label: "Ball gag",
+    file: "ball_gags_joschek_zit.safetensors",
+    models: ["z-image-turbo"], // breaks Z-Image Base images (tested 2026-11-18)
+    strength: 0.8,
+    note: "A normal-sized ball gag. Write “ballgag” (or “ball gag”) in the prompt; you can name a colour. Turbo only.",
+    source: "https://civitai.com/models/2246853",
+    keywords: /\bball[- ]?gag(s|ged)?\b/i, // "ballgag", "ball gag", "ball-gagged"
   },
   "ball-gag": {
-    label: "Ball gag",
+    label: "Large ball gag",
     file: "ball_gag_zit.safetensors",
     models: ["z-image-turbo", "z-image-base"],
     strength: 0.8,
-    note: "Write “ballgag” (or “ball gag”) in the prompt; you can name a colour. Made for Z-Image Turbo.",
+    note: "An oversized ball gag. On Turbo, automatic mode uses it only when the prompt says “large”, “big” or “huge” ballgag; on Base it is the only ball gag. Made for Z-Image Turbo.",
     source: "https://civitai.com/models/999177",
-    keywords: /\bball[- ]?gag(s|ged)?\b/i, // "ballgag", "ball gag", "ball-gagged"
+    keywords: /\bball[- ]?gag(s|ged)?\b/i,
+    // Steps aside for the normal-sized one when both are usable, unless the prompt asks for a big one.
+    yieldsTo: "ball-gags",
+    forceKeywords: /\b(large|big|huge|giant|oversized)\b[\w ,-]{0,20}?\bball[- ]?gag/i,
   },
   "hogtie": {
     label: "Hogtie",
@@ -190,9 +210,12 @@ const LORAS = {
 };
 
 // Automatic mode (the default): picks add-ons from the prompt using each LoRA's keywords.
-// If nothing matches, the general rope + cleave gag LoRA is used, so every image leans towards bondage.
-// Several LoRAs at full strength fight each other, so strengths drop as more are picked.
-const AUTO_DEFAULT_LORA = "rope-cleave";
+// General rope words add "Rope bound" unless a pose LoRA (hogtie) was picked. A LoRA with yieldsTo
+// steps aside for that one unless its forceKeywords match, then that one steps aside instead
+// (the large ball gag vs the normal one). If nothing matches, "Rope bound" is used,
+// so every image leans towards bondage. Several LoRAs at full strength fight each other, so
+// strengths drop as more are picked.
+const AUTO_DEFAULT_LORA = "rope-bound";
 const AUTO_STRENGTHS = [0.8, 0.65, 0.55]; // for 1, 2, 3+ LoRAs
 function autoLoras(prompt, modelId) {
   const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
@@ -201,6 +224,12 @@ function autoLoras(prompt, modelId) {
   if (!picked.some(([, l]) => l.pose)) {
     picked = usable.filter(([id, l]) => picked.some(([p]) => p === id) || l.generalKeywords?.test(text));
   }
+  const drop = new Set();
+  for (const [id, l] of picked) {
+    if (!l.yieldsTo || !picked.some(([p]) => p === l.yieldsTo)) continue;
+    drop.add(l.forceKeywords?.test(text) ? l.yieldsTo : id);
+  }
+  picked = picked.filter(([id]) => !drop.has(id));
   if (!picked.length) picked = usable.filter(([id]) => id === AUTO_DEFAULT_LORA);
   const cap = AUTO_STRENGTHS[Math.min(picked.length, AUTO_STRENGTHS.length) - 1];
   return picked.map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: Math.min(l.strength, cap) }));

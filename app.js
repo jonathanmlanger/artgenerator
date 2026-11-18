@@ -421,7 +421,7 @@ function updateLoraPreview() {
   if (!loraAuto()) { el.textContent = "Off: tick the add-ons to use below."; return; }
   const prompt = (view === "chat" ? $("chatInput") : $("prompt")).value;
   const picked = autoLoras(prompt, effectiveModelId());
-  el.textContent = "Picks add-ons from your prompt (e.g. “hogtied”, “ballgag”, “cleave gag”, “rope”); rope bondage when none match. " +
+  el.textContent = "Picks add-ons from your prompt (e.g. “hogtied”, “ballgag”, “huge ballgag”, “cleave gag”, “tied to a chair”); rope bound when none match. " +
     (picked.length ? "Will use: " + picked.map((l) => `${l.label} ${l.strength}`).join(", ") + "." : "");
 }
 
