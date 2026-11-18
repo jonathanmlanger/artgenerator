@@ -124,7 +124,7 @@ const REF_MODES = {
   },
   character: {
     label: "Character / scene reference",
-    note: "Up to 3 images: e.g. image 1 = your character, image 2 = a pose or setting. Write prompts like “The woman from image 1 in the pose from image 2, in a candlelit room.” Requires the Step 6 upgrade.",
+    note: "Image 1 = your character. With bondage add-ons on (the default), the scene is made first from your prompt with the add-ons, then the person from image 1 is put into it; only image 1 is used. Write prompts like “The woman from image 1, hogtied on a bed with a red ballgag.” With add-ons off: up to 3 images (e.g. image 2 = a pose or setting). Requires the Step 6 upgrade.",
     maxImages: 3, model: "qwen-edit", needsUpgrade: true, strength: null,
   },
 };
@@ -206,6 +206,9 @@ const LORAS = {
     source: "https://civitai.com/models/2267371",
     keywords: /\bhog[- ]?(tie[ds]?|tying)\b/i, // "hogtie", "hogtied", "hog-tied", "hog tied"
     pose: true,
+    // A lying-down pose: in a tall frame the body ends up head-down towards the camera (tested), so
+    // portrait sizes are turned to landscape when this LoRA is used.
+    wide: true,
   },
 };
 
@@ -214,7 +217,8 @@ const LORAS = {
 // steps aside for that one unless its forceKeywords match, then that one steps aside instead
 // (the large ball gag vs the normal one). If nothing matches, "Rope bound" is used,
 // so every image leans towards bondage. Several LoRAs at full strength fight each other, so
-// strengths drop as more are picked.
+// strengths drop as more are picked; a pose LoRA keeps full strength and the others drop further,
+// because the pose is what goes missing first (tested).
 const AUTO_DEFAULT_LORA = "rope-bound";
 const AUTO_STRENGTHS = [0.8, 0.65, 0.55]; // for 1, 2, 3+ LoRAs
 function autoLoras(prompt, modelId) {
@@ -232,7 +236,48 @@ function autoLoras(prompt, modelId) {
   picked = picked.filter(([id]) => !drop.has(id));
   if (!picked.length) picked = usable.filter(([id]) => id === AUTO_DEFAULT_LORA);
   const cap = AUTO_STRENGTHS[Math.min(picked.length, AUTO_STRENGTHS.length) - 1];
-  return picked.map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: Math.min(l.strength, cap) }));
+  const hasPose = picked.length > 1 && picked.some(([, l]) => l.pose);
+  const strengthOf = (l) => !hasPose ? Math.min(l.strength, cap)
+    : l.pose ? l.strength : Math.max(0.4, Math.round((cap - 0.15) * 100) / 100);
+  return picked.map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: strengthOf(l) }));
+}
+
+// ---------- Character mode in two steps ----------
+// Qwen Image Edit (character mode) has no bondage LoRAs. So when add-ons apply, character mode first
+// makes the scene with Z-Image + LoRAs, then Qwen Image Edit puts the person from image 1 into it.
+
+// The model that makes the scene: the chosen one if it has LoRAs, otherwise Z-Image Turbo.
+function sceneModelFor(modelId) {
+  return Object.values(LORAS).some((l) => l.models.includes(modelId)) ? modelId : "z-image-turbo";
+}
+
+// The prompt for the scene: references to images ("the woman from image 1") are removed, and extra
+// lines that only describe a reference image (added by the library) are dropped.
+function scenePrompt(prompt) {
+  const [first, ...rest] = String(prompt || "").split(/\n\n/);
+  const ref = /\b(image|picture|photo)\s*\d\b/i;
+  const main = first
+    .replace(/\s*,?\s*\b(from|in|of|shown in|like|as in|based on)\s+(the\s+)?(image|picture|photo)\s*\d\b/gi, "")
+    .replace(/\b(the\s+)?(image|picture|photo)\s*\d\b/gi, "the person")
+    .replace(/\s{2,}/g, " ").trim();
+  return [main, ...rest.filter((l) => !ref.test(l))].join("\n\n");
+}
+
+// The instruction for step 2. Image 1 is the scene, image 2 the person (this order worked best in
+// tests: the edit model changes image 1 and borrows from image 2).
+const SCENE_IMAGE = 1, CHARACTER_IMAGE = 2;
+function characterSwapPrompt() {
+  return `Replace the face and hair of the woman in image ${SCENE_IMAGE} with the face and hair of the woman in image ${CHARACTER_IMAGE}: ` +
+    `her facial features, hair colour, hairstyle, eye colour, freckles and skin tone. Take nothing else from image ${CHARACTER_IMAGE} — ` +
+    `not her clothes, background or expression. If the woman in image ${SCENE_IMAGE} is gagged, the gag stays exactly where it is, ` +
+    `over or in her mouth, with her lips closed around it as in image ${SCENE_IMAGE}. Everything else in image ${SCENE_IMAGE} stays exactly ` +
+    `the same: the pose, the head position, the ropes, her clothes, the setting, the camera angle and the lighting.`;
+}
+
+// [width, height] to use: portrait sizes turn to landscape when a "wide" LoRA (a lying-down pose) is used.
+function sizeForLoras(width, height, loras) {
+  const wide = (loras || []).some((l) => LORAS[l.id]?.wide);
+  return wide && height > width ? [height, width] : [width, height];
 }
 
 // The LoRA file to load for a model: per-model files win over the shared one.

@@ -253,6 +253,11 @@ function refMode() { return $("refMode").value; }
 // In chat view the panel's own reference mode is not used, so the model picker is always free.
 function panelMode() { return view === "chat" ? "none" : refMode(); }
 function effectiveModelId() { return REF_MODES[panelMode()]?.model || $("model").value; }
+// Character mode makes its scene with the chosen model (see sceneModelFor), so add-ons follow that one.
+function loraModelId() {
+  const id = effectiveModelId();
+  return id === "qwen-edit" ? sceneModelFor($("model").value) : id;
+}
 
 function initControls() {
   const modelSel = $("model");
@@ -301,7 +306,8 @@ function applyRefMode(changed) {
   const r = REF_MODES[refMode()];
   const on = refMode() !== "none";
   $("refWrap").hidden = !on;
-  $("model").disabled = !!REF_MODES[panelMode()].model;
+  // In character mode the model still matters: it makes the scene before the character is put in.
+  $("model").disabled = !!REF_MODES[panelMode()].model && REF_MODES[panelMode()].model !== "qwen-edit";
   if (on) {
     $("refNote").textContent = r.note;
     $("strengthWrap").hidden = r.strength == null;
@@ -325,7 +331,9 @@ function setSize(k) {
 function applyModel(resetAdvanced) {
   const forced = REF_MODES[panelMode()]?.model;
   const m = MODELS[effectiveModelId()];
-  $("modelNote").textContent = forced ? `This mode uses ${m.label.split(" —")[0]}. ${m.needsUpgrade ? "Requires the Step 6 upgrade." : ""}` : m.note;
+  $("modelNote").textContent = forced === "qwen-edit"
+    ? `With bondage add-ons, this mode first makes the scene with ${MODELS[sceneModelFor($("model").value)].label.split(" —")[0]}, then puts the person from image 1 into it with ${m.label.split(" —")[0]}. Requires the Step 6 upgrade.`
+    : forced ? `This mode uses ${m.label.split(" —")[0]}. ${m.needsUpgrade ? "Requires the Step 6 upgrade." : ""}` : m.note;
   $("negWrap").hidden = !m.supportsNegative;
   if (resetAdvanced || !$("steps").value) {
     $("steps").value = m.defaults.steps;
@@ -355,7 +363,7 @@ function activeLoras(modelId, prompt) {
     .map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: loraSettings(id, st).strength }));
 }
 function renderLoras() {
-  const modelId = effectiveModelId();
+  const modelId = loraModelId();
   const list = $("loraList");
   list.textContent = "";
   const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
@@ -420,7 +428,7 @@ function updateLoraPreview() {
   if (!el) return;
   if (!loraAuto()) { el.textContent = "Off: tick the add-ons to use below."; return; }
   const prompt = (view === "chat" ? $("chatInput") : $("prompt")).value;
-  const picked = autoLoras(prompt, effectiveModelId());
+  const picked = autoLoras(scenePrompt(prompt), loraModelId());
   el.textContent = "Picks add-ons from your prompt (e.g. “hogtied”, “ballgag”, “huge ballgag”, “cleave gag”, “tied to a chair”); rope bound when none match. " +
     (picked.length ? "Will use: " + picked.map((l) => `${l.label} ${l.strength}`).join(", ") + "." : "");
 }
@@ -463,20 +471,39 @@ function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("r
     loras: activeLoras(modelId, prompt),
     loraAuto: loraAuto(),
   };
+  // Character mode with add-ons runs in two steps (see executeCharacterScene): the scene, then the person.
+  if (modelId === "qwen-edit") {
+    const sceneModel = sceneModelFor($("model").value);
+    const sp = scenePrompt(prompt);
+    const loras = activeLoras(sceneModel, sp);
+    if (loras.length) {
+      const sm = MODELS[sceneModel];
+      settings.scene = { model: sceneModel, prompt: sp, steps: sm.defaults.steps, cfg: sm.defaults.cfg,
+        negative: sm.supportsNegative ? $("negative").value.trim() : "" };
+      settings.loras = loras;
+      // Step 2 uses the first reference image as the person.
+      useRefs.splice(1);
+      settings.refCount = 1;
+      settings.refNames = settings.refNames.slice(0, 1);
+    }
+  }
+  // A lying-down pose (hogtie) comes out head-down in a tall frame, so use landscape for it.
+  const [w, h] = sizeForLoras(settings.width, settings.height, settings.loras);
+  if (w !== settings.width) { settings.width = w; settings.height = h; settings.turnedWide = true; }
   return { settings, useRefs };
 }
 
 // Runs a generation and saves the results to the gallery. Returns { items, summary }.
 async function executeGeneration(settings, useRefs, onStatus) {
+  if (settings.scene) return executeCharacterScene(settings, useRefs, onStatus);
   const started = Date.now();
   onStatus(useRefs.length ? "Uploading reference images and sending job…" : "Sending job to RunPod…");
   const workflow = applyLoras(applyReference(MODELS[settings.model].build(settings), settings), settings.loras);
   const input = { workflow };
   if (useRefs.length) input.images = useRefs.map((r, i) => ({ name: settings.refNames[i], image: r.dataUrl }));
   const result = await runJob(input, (st, secs) => {
-    if (st === "IN_QUEUE") {
-      onStatus(`Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take 1–3 minutes while the worker boots and loads the model. Tip: press “Wake up GPU” when you sit down.)`);
-    } else onStatus(`Generating… ${secs}s`);
+    if (st === "IN_QUEUE") onStatus(waitText(secs));
+    else onStatus(`Generating… ${secs}s`);
   }, true, endpointFor(settings.model));
   if (result.status !== "COMPLETED") throw new Error(describeFailure(result));
   const images = extractImages(result.output);
@@ -491,7 +518,56 @@ async function executeGeneration(settings, useRefs, onStatus) {
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   const exec = result.executionTime ? ` (GPU time ${(result.executionTime / 1000).toFixed(1)}s)` : "";
   const loraText = settings.loras?.length ? ` LoRA: ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.` : "";
-  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}` };
+  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out upside down in a tall frame." : "";
+  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
+}
+
+const waitText = (secs) => `Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take 1–3 minutes while the worker boots and loads the model. Tip: press “Wake up GPU” when you sit down.)`;
+
+// Character mode with bondage add-ons. Step 1: Z-Image + LoRAs makes the scene from the prompt.
+// Step 2: Qwen Image Edit replaces the person in each scene image with the person from image 1.
+async function executeCharacterScene(settings, useRefs, onStatus) {
+  const started = Date.now();
+  const sc = settings.scene;
+  const sceneSettings = { ...settings, ...sc, refMode: "none", refCount: 0, refNames: [] };
+  onStatus("Step 1 of 2: making the scene…");
+  const workflow = applyLoras(MODELS[sc.model].build(sceneSettings), settings.loras);
+  const r1 = await runJob({ workflow }, (st, secs) => onStatus(st === "IN_QUEUE" ? `Step 1 of 2: ${waitText(secs)}` : `Step 1 of 2: making the scene… ${secs}s`),
+    true, endpointFor(sc.model));
+  if (r1.status !== "COMPLETED") throw new Error(describeFailure(r1));
+  const scenes = extractImages(r1.output);
+  if (!scenes.length) throw new Error("The scene finished but returned no images. " + JSON.stringify(r1.output).slice(0, 300));
+
+  const items = [];
+  let gpu = r1.executionTime || 0;
+  for (const [i, b64] of scenes.entries()) {
+    const step = scenes.length > 1 ? `Step 2 of 2 (image ${i + 1} of ${scenes.length})` : "Step 2 of 2";
+    onStatus(`${step}: putting your character into the scene…`);
+    // Image 1 = the scene, image 2 = the person (see characterSwapPrompt).
+    const sceneName = `studio_scene_${Date.now()}_${i}.png`;
+    const editSettings = { ...settings, prompt: characterSwapPrompt(), count: 1, refNames: [sceneName, settings.refNames[0]] };
+    const input = {
+      workflow: MODELS["qwen-edit"].build(editSettings),
+      images: [
+        { name: sceneName, image: `data:image/png;base64,${b64}` },
+        { name: settings.refNames[0], image: useRefs[0].dataUrl },
+      ],
+    };
+    const r2 = await runJob(input, (st, secs) => onStatus(st === "IN_QUEUE" ? `${step}: ${waitText(secs)}` : `${step}: putting your character into the scene… ${secs}s`),
+      true, endpointFor("qwen-edit"));
+    if (r2.status !== "COMPLETED") throw new Error(describeFailure(r2));
+    const out = extractImages(r2.output)[0];
+    if (!out) throw new Error("The character step finished but returned no image. " + JSON.stringify(r2.output).slice(0, 300));
+    gpu += r2.executionTime || 0;
+    const item = { id: `${Date.now()}-${i}`, created: Date.now(), blob: b64ToBlob(out), settings: { ...settings, index: i } };
+    await db.add(item);
+    items.push(item);
+  }
+  const secs = ((Date.now() - started) / 1000).toFixed(0);
+  const exec = gpu ? ` (GPU time ${(gpu / 1000).toFixed(1)}s)` : "";
+  const loraText = ` Scene: ${MODELS[sc.model].label.split(" —")[0]} with ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.`;
+  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out upside down in a tall frame." : "";
+  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
 }
 
 async function generate() {
@@ -542,11 +618,15 @@ async function wake() {
   btn.classList.remove("ready");
   try {
     // Warm the GPU and model the current settings will use (character reference runs on the edit endpoint).
+    // Character mode with add-ons also makes a scene on the main endpoint, so warm that one too.
     const modelId = effectiveModelId();
-    const r = await runJob({ workflow: warmupWorkflow(modelId) }, (st, secs) => {
+    const sceneModel = sceneModelFor($("model").value);
+    const ids = modelId === "qwen-edit" && activeLoras(sceneModel, "").length ? [modelId, sceneModel] : [modelId];
+    const rs = await Promise.all(ids.map((id) => runJob({ workflow: warmupWorkflow(id) }, (st, secs) => {
       btn.textContent = st === "IN_QUEUE" ? `Starting GPU… ${secs}s` : "Loading model…";
-    }, false, endpointFor(modelId));
-    if (r.status !== "COMPLETED") throw new Error(describeFailure(r));
+    }, false, endpointFor(id))));
+    const r = rs.find((x) => x.status !== "COMPLETED");
+    if (r) throw new Error(describeFailure(r));
     btn.textContent = "GPU ready";
     btn.classList.add("ready");
     btn.title = "A worker is warm. It shuts down after your endpoint's idle timeout.";
@@ -647,7 +727,8 @@ function openViewer(item) {
 
 function reuse(item) {
   const s = item.settings;
-  if (MODELS[s.model] && !MODELS[s.model].hidden) { $("model").value = s.model; store.set("ui_model", s.model, true); }
+  const panelModel = s.scene?.model || s.model;
+  if (MODELS[panelModel] && !MODELS[panelModel].hidden) { $("model").value = panelModel; store.set("ui_model", panelModel, true); }
   $("refMode").value = s.refMode || "none"; store.set("ui_refmode", $("refMode").value, true);
   applyRefMode(false);
   if (s.refStrength != null) { $("refStrength").value = s.refStrength; $("strengthVal").textContent = Number(s.refStrength).toFixed(2); }
@@ -669,7 +750,7 @@ function reuse(item) {
     const st = loraState();
     st._auto = false;
     for (const id of Object.keys(LORAS)) {
-      if (!LORAS[id].models.includes(s.model)) continue;
+      if (!LORAS[id].models.includes(panelModel)) continue;
       const used = s.loras.find((l) => l.id === id);
       st[id] = { on: !!used, strength: used ? used.strength : loraSettings(id, st).strength };
     }
