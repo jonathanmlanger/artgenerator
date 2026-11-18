@@ -6,6 +6,7 @@
 # API Keys, then run (replace the key, keep the space at the start so it isn't saved in shell history):
 #    export CIVITAI_TOKEN=your_key_here
 #   curl -fsSL https://raw.githubusercontent.com/jonathanmlanger/artgenerator/wip-cloudflare-server/worker/download-loras.sh | bash
+# (or wget -qO- <same URL> | bash where curl isn't installed)
 #
 # Files go to models/loras (/workspace on a Pod, /runpod-volume for serverless workers).
 # Safe to re-run: files that are already complete are skipped.
@@ -28,6 +29,20 @@ FILES=(
 
 sha() { sha256sum "$1" | awk '{print toupper($1)}'; }
 
+# curl if available, else wget (the runpod/worker-comfyui image has no curl).
+download() {
+  if command -v curl >/dev/null 2>&1; then
+    local auth=()
+    [ -n "${CIVITAI_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $CIVITAI_TOKEN")
+    curl -fL --retry 5 --retry-delay 5 --progress-bar "${auth[@]}" -o "$2" "$1"
+  else
+    # Token as a query parameter: wget would resend an Authorization header to the storage host after the redirect.
+    local url="$1"
+    [ -n "${CIVITAI_TOKEN:-}" ] && url="$url?token=$CIVITAI_TOKEN"
+    wget -q --tries=5 --waitretry=5 -O "$2" "$url"
+  fi
+}
+
 failed=0
 i=0
 for entry in "${FILES[@]}"; do
@@ -45,9 +60,7 @@ for entry in "${FILES[@]}"; do
   fi
   echo "[$i/${#FILES[@]}] Downloading $name -> models/loras/"
   url="https://civitai.com/api/download/models/$version"
-  auth=()
-  [ -n "${CIVITAI_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $CIVITAI_TOKEN")
-  if ! curl -fL --retry 5 --retry-delay 5 --progress-bar "${auth[@]}" -o "$dest.part" "$url"; then
+  if ! download "$url" "$dest.part"; then
     echo "ERROR: download of $name failed. If it says 401/403, check your Civitai API key." >&2
     rm -f "$dest.part"; failed=1; continue
   fi
