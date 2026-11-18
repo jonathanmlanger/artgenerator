@@ -163,14 +163,18 @@ const LORAS = {
     strength: 0.8,
     note: "Ropework (chest harness, wrists, ankles, arms behind the back) and cloth cleave gags. Describe the ropes, colours and position in plain sentences. Made for Z-Image Base; also works on Turbo.",
     source: "https://civitai.com/models/2532774",
+    keywords: /\b(shibari|cleave[- ]?gag(ged)?)\b/i,
+    // General words only count when no pose LoRA (like hogtie) was picked, which draws its own ropes.
+    generalKeywords: /\b(rope[sd]?|tied|bound|bondage|restrained)\b/i,
   },
   "ball-gag": {
     label: "Ball gag",
     file: "ball_gag_zit.safetensors",
     models: ["z-image-turbo", "z-image-base"],
     strength: 0.8,
-    note: "Include “gagged with a ball gag” in the prompt; you can name a colour. Made for Z-Image Turbo.",
+    note: "Write “ballgag” (or “ball gag”) in the prompt; you can name a colour. Made for Z-Image Turbo.",
     source: "https://civitai.com/models/999177",
+    keywords: /\bball[- ]?gag(s|ged)?\b/i, // "ballgag", "ball gag", "ball-gagged"
   },
   "hogtie": {
     label: "Hogtie",
@@ -180,8 +184,27 @@ const LORAS = {
     strength: 0.8,
     note: "Lying on the stomach, wrists and ankles tied together behind the back. Describe the rope colour, clothes, shoes or bare feet and the gag (ball or cloth) in plain sentences.",
     source: "https://civitai.com/models/2267371",
+    keywords: /\bhog[- ]?(tie[ds]?|tying)\b/i, // "hogtie", "hogtied", "hog-tied", "hog tied"
+    pose: true,
   },
 };
+
+// Automatic mode (the default): picks add-ons from the prompt using each LoRA's keywords.
+// If nothing matches, the general rope + cleave gag LoRA is used, so every image leans towards bondage.
+// Several LoRAs at full strength fight each other, so strengths drop as more are picked.
+const AUTO_DEFAULT_LORA = "rope-cleave";
+const AUTO_STRENGTHS = [0.8, 0.65, 0.55]; // for 1, 2, 3+ LoRAs
+function autoLoras(prompt, modelId) {
+  const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
+  const text = prompt || "";
+  let picked = usable.filter(([, l]) => l.keywords?.test(text));
+  if (!picked.some(([, l]) => l.pose)) {
+    picked = usable.filter(([id, l]) => picked.some(([p]) => p === id) || l.generalKeywords?.test(text));
+  }
+  if (!picked.length) picked = usable.filter(([id]) => id === AUTO_DEFAULT_LORA);
+  const cap = AUTO_STRENGTHS[Math.min(picked.length, AUTO_STRENGTHS.length) - 1];
+  return picked.map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: Math.min(l.strength, cap) }));
+}
 
 // The LoRA file to load for a model: per-model files win over the shared one.
 function loraFile(l, modelId) {

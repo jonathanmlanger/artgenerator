@@ -278,7 +278,7 @@ function initControls() {
 
   $("negative").value = store.get("ui_negative") ?? DEFAULT_NEGATIVE;
   $("prompt").value = store.get("ui_prompt") || "";
-  $("prompt").addEventListener("input", () => store.set("ui_prompt", $("prompt").value, true));
+  $("prompt").addEventListener("input", () => { store.set("ui_prompt", $("prompt").value, true); updateLoraPreview(); });
   $("negative").addEventListener("input", () => store.set("ui_negative", $("negative").value, true));
   $("resetAdvanced").addEventListener("click", () => applyModel(true));
 
@@ -335,7 +335,7 @@ function applyModel(resetAdvanced) {
 }
 
 // ---------- LoRA add-ons ----------
-// Saved per browser as { [loraId]: { on, strength } }.
+// Saved per browser as { _auto, [loraId]: { on, strength } }. _auto (default on) picks add-ons from the prompt.
 function loraState() {
   try { return JSON.parse(store.get("ui_loras") || "{}") || {}; } catch { return {}; }
 }
@@ -344,9 +344,12 @@ function loraSettings(id, st = loraState()) {
   const l = LORAS[id];
   return { on: !!st[id]?.on, strength: clampNum(st[id]?.strength, 0.05, 1.5, l.strength) };
 }
-// The ticked LoRAs that work with this model, as { id, label, file, strength }.
-function activeLoras(modelId) {
+function loraAuto(st = loraState()) { return st._auto !== false; }
+// The LoRAs to use with this model, as { id, label, file, strength }: picked from the prompt in
+// automatic mode, otherwise the ticked ones.
+function activeLoras(modelId, prompt) {
   const st = loraState();
+  if (loraAuto(st)) return autoLoras(prompt, modelId);
   return Object.entries(LORAS)
     .filter(([id, l]) => l.models.includes(modelId) && loraSettings(id, st).on)
     .map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: loraSettings(id, st).strength }));
@@ -357,6 +360,29 @@ function renderLoras() {
   list.textContent = "";
   const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
   $("loraWrap").hidden = !usable.length;
+  if (!usable.length) return;
+  const auto = loraAuto();
+  const autoRow = document.createElement("div");
+  autoRow.className = "lora-row";
+  const autoLab = document.createElement("label");
+  autoLab.className = "lora-name";
+  const autoCb = document.createElement("input");
+  autoCb.type = "checkbox";
+  autoCb.checked = auto;
+  autoLab.append(autoCb, " Automatic");
+  const preview = document.createElement("p");
+  preview.className = "hint";
+  preview.id = "loraAutoPreview";
+  autoCb.addEventListener("change", () => {
+    const st = loraState();
+    st._auto = autoCb.checked;
+    saveLoraState(st);
+    renderLoras();
+  });
+  autoRow.append(autoLab, preview);
+  list.append(autoRow);
+  updateLoraPreview();
+  if (auto) return;
   for (const [id, l] of usable) {
     const cur = loraSettings(id);
     const row = document.createElement("div");
@@ -386,6 +412,17 @@ function renderLoras() {
     row.append(lab, num, note);
     list.append(row);
   }
+}
+
+// Shows which add-ons automatic mode will use for the prompt being typed.
+function updateLoraPreview() {
+  const el = document.getElementById("loraAutoPreview");
+  if (!el) return;
+  if (!loraAuto()) { el.textContent = "Off: tick the add-ons to use below."; return; }
+  const prompt = (view === "chat" ? $("chatInput") : $("prompt")).value;
+  const picked = autoLoras(prompt, effectiveModelId());
+  el.textContent = "Picks add-ons from your prompt (e.g. “hogtied”, “ballgag”, “cleave gag”, “rope”); rope bondage when none match. " +
+    (picked.length ? "Will use: " + picked.map((l) => `${l.label} ${l.strength}`).join(", ") + "." : "");
 }
 
 function setStatus(msg, isError = false) {
@@ -423,7 +460,8 @@ function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("r
     refCount: useRefs.length,
     refStrength: rmode.strength == null ? null : clampNum(strengthValue, 0.05, 1, rmode.strength),
     refNames: useRefs.map((r) => `studio_ref_${r.id}.jpg`),
-    loras: activeLoras(modelId),
+    loras: activeLoras(modelId, prompt),
+    loraAuto: loraAuto(),
   };
   return { settings, useRefs };
 }
@@ -622,8 +660,14 @@ function reuse(item) {
   $("steps").value = s.steps;
   $("cfg").value = s.cfg;
   $("count").value = "1";
-  if (Array.isArray(s.loras)) {
+  if (s.loraAuto) {
     const st = loraState();
+    st._auto = true;
+    saveLoraState(st);
+    renderLoras();
+  } else if (Array.isArray(s.loras)) {
+    const st = loraState();
+    st._auto = false;
     for (const id of Object.keys(LORAS)) {
       if (!LORAS[id].models.includes(s.model)) continue;
       const used = s.loras.find((l) => l.id === id);
@@ -837,7 +881,7 @@ function initChat() {
 
   const input = $("chatInput");
   const grow = () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 200) + "px"; };
-  input.addEventListener("input", grow);
+  input.addEventListener("input", () => { grow(); updateLoraPreview(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat(); }
   });
