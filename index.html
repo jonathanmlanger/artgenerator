@@ -9,21 +9,40 @@
 </head>
 <body>
   <header class="topbar">
+    <button id="menuBtn" class="menu-btn" aria-label="Options" aria-expanded="false" aria-controls="drawer" title="Options">
+      <span></span><span></span><span></span>
+    </button>
     <h1>Image Studio</h1>
+    <div class="tablist" role="tablist">
+      <button id="tabChat" role="tab" aria-controls="chatView">Chat</button>
+      <button id="tabGallery" role="tab" aria-controls="galleryView">Gallery</button>
+      <button id="tabLibrary" role="tab" aria-controls="libraryView">Library</button>
+    </div>
     <div class="topbar-right">
       <span id="syncState" class="conn" hidden></span>
       <span id="conn" class="conn" title="Connection status">Not connected</span>
-      <button id="wake" class="ghost" title="Start a GPU worker now so your first image is fast">Wake up GPU</button>
-      <button id="openSettings" class="ghost">Settings</button>
+      <button id="wake" class="ghost" title="Start the image computer now, so your first picture comes quickly">Warm up</button>
     </div>
   </header>
 
   <p id="storageWarn" class="banner" role="status" hidden></p>
-  <main class="layout">
-    <section class="panel controls" aria-label="Generation settings">
-      <p class="hint">Made with Qwen-Image 2.1. Attach up to 3 images and say in the prompt what to do with them: “the woman from image 1…”, “…in the pose from image 2”, “In image 1, change her shirt to red”.</p>
+  <div id="drawerBackdrop" class="backdrop" hidden></div>
+  <aside id="drawer" class="drawer controls" aria-label="Options">
+      <div class="drawer-head">
+        <h2>Options</h2>
+        <button id="drawerClose" class="icon-btn" aria-label="Close options" title="Close">×</button>
+      </div>
+      <button id="newChat" class="ghost wide chat-only">New chat</button>
+
+      <label>Shape</label>
+      <div id="sizes" class="chips" role="radiogroup"></div>
+      <p class="hint">Auto keeps the shape of the picture you're editing, and makes hogties wide.</p>
+
+      <label for="count">How many pictures</label>
+      <select id="count"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+
       <div id="loraWrap" class="lora-wrap" hidden>
-        <label>Bondage add-ons (LoRAs)</label>
+        <label>Bondage helper</label>
         <div id="loraList"></div>
       </div>
 
@@ -45,43 +64,32 @@
       </div>
       </div>
 
-      <label>Aspect ratio <span class="hint-inline">(Auto: edits keep image 1's shape; hogties are landscape)</span></label>
-      <div id="sizes" class="chips" role="radiogroup"></div>
-
-      <div class="row">
-        <div>
-          <label for="count">Images</label>
-          <select id="count"><option>1</option><option>2</option><option>3</option><option>4</option></select>
-        </div>
-        <div>
-          <label for="seed">Seed</label>
-          <input id="seed" type="number" placeholder="random" min="0">
-        </div>
-      </div>
+      <details class="advanced">
+        <summary>More options</summary>
+        <label for="seed">Repeat a picture</label>
+        <input id="seed" type="number" placeholder="Leave empty for a new picture each time" min="0">
+        <p class="hint">Enter the number shown under a picture to make it again (useful for small changes to the description).</p>
+      </details>
 
       <div class="studio-only">
         <button id="generate" class="primary">Generate</button>
         <button id="cancel" class="ghost" hidden>Cancel</button>
       </div>
-      <p id="status" class="status" role="status" aria-live="polite"></p>
-    </section>
 
-    <section class="main-area">
-      <div class="tabs">
-        <div class="tablist" role="tablist">
-          <button id="tabChat" role="tab" aria-controls="chatView">Chat</button>
-          <button id="tabGallery" role="tab" aria-controls="galleryView">Gallery</button>
-          <button id="tabLibrary" role="tab" aria-controls="libraryView">Library</button>
-        </div>
-        <span id="storageHint" class="hint">Saved only in this browser</span>
-        <button id="newChat" class="ghost small chat-only">New chat</button>
+      <div class="drawer-foot">
+        <button id="openSettings" class="ghost wide">Settings</button>
+        <p id="storageHint" class="hint">Saved only in this browser</p>
       </div>
+  </aside>
+
+  <main class="main-area">
+      <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <div id="chatView" class="chat" role="tabpanel" aria-labelledby="tabChat">
         <div id="thread" class="thread">
           <div id="chatEmpty" class="chat-empty">
-            <p><strong>Paste or drop an image, describe what you want, press Enter.</strong></p>
-            <p>Attached images are image 1, 2, 3: say what to do with them, e.g. “the woman from image 1, hogtied on a bed with a red ballgag” or “in image 1, change her shirt to red”. Click <em>Edit</em> under any result to keep working on it.</p>
+            <p><strong>Describe the picture you want and press Enter.</strong></p>
+            <p>Add up to 3 pictures with <strong>+</strong> (or paste / drop them). They're image 1, 2 and 3, so you can write “the woman from image 1, hogtied on a bed with a red ballgag” or “in image 1, change her shirt to red”. Tap <em>Edit</em> under a result to keep working on it.</p>
           </div>
         </div>
         <form id="composer" class="composer">
@@ -94,7 +102,7 @@
             <label class="icon-btn" title="Attach image" aria-label="Attach image">+
               <input id="chatFile" type="file" accept="image/*" multiple hidden>
             </label>
-            <textarea id="chatInput" rows="1" placeholder="Describe an image, or paste one in…" title="Enter to send, Shift+Enter for a new line"></textarea>
+            <textarea id="chatInput" rows="1" placeholder="Describe a picture…" title="Enter to send, Shift+Enter for a new line"></textarea>
             <button id="chatSend" class="primary" type="submit">Send</button>
           </div>
         </form>
@@ -107,13 +115,12 @@
 
       <div id="libraryView" role="tabpanel" aria-labelledby="tabLibrary" hidden>
         <div class="lib-head">
-          <p class="hint">Save terms the models struggle with, each with a precise description and example images. When a term appears in a prompt, a chip shows under the message box: the description is added to the prompt, and you can tick <em>+ example</em> to attach the first example image (this uses Character / scene reference mode).</p>
+          <p class="hint">Save words the picture-maker gets wrong, each with a clear description and example pictures. When you use the word in a message, a chip appears under the message box: the description is added for you, and <em>+ example</em> also attaches the first example picture.</p>
           <button id="libNew" class="primary">New entry</button>
         </div>
         <div id="libList" class="lib-list"></div>
         <p id="libEmpty" class="empty">No library entries yet.</p>
       </div>
-    </section>
   </main>
 
   <dialog id="settings">
@@ -214,8 +221,8 @@
     <div class="viewer-bar">
       <p id="viewerMeta" class="viewer-meta"></p>
       <div class="viewer-actions">
-        <button id="vReuse" class="ghost">Reuse settings</button>
-        <button id="vUseRef" class="ghost">Use as reference</button>
+        <button id="vReuse" class="ghost" title="Put this picture's description and number back in the chat">Make again</button>
+        <button id="vUseRef" class="ghost" title="Attach this picture in the chat to change it">Edit in chat</button>
         <a id="vDownload" class="button ghost" download>Download</a>
         <button id="vDelete" class="ghost danger">Delete</button>
         <button id="vClose" class="primary">Close</button>

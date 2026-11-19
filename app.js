@@ -326,7 +326,7 @@ function renderLoras() {
   const autoCb = document.createElement("input");
   autoCb.type = "checkbox";
   autoCb.checked = auto;
-  autoLab.append(autoCb, " Automatic");
+  autoLab.append(autoCb, " On (recommended)");
   const preview = document.createElement("p");
   preview.className = "hint";
   preview.id = "loraAutoPreview";
@@ -375,11 +375,10 @@ function renderLoras() {
 function updateLoraPreview() {
   const el = document.getElementById("loraAutoPreview");
   if (!el) return;
-  if (!loraAuto()) { el.textContent = "Off: tick the add-ons to use below."; return; }
+  if (!loraAuto()) { el.textContent = "Off: choose add-ons yourself below, or switch it back on."; return; }
   const prompt = (view === "chat" ? $("chatInput") : $("prompt")).value;
   const picked = autoLoras(prompt, effectiveModelId());
-  el.textContent = "On: the bondage add-on is used and your poses and gags (e.g. “hogtied”, “ballgag”, “tied to a chair”, “cleave gag”) are spelled out for it behind the scenes. " +
-    (picked.length ? "Will use: " + picked.map((l) => `${l.label} ${l.strength}`).join(", ") + "." : "");
+  el.textContent = "Helps with ropes, hogties, chair ties and gags, and fills in the details of the pose and gag you describe.";
 }
 
 function setStatus(msg, isError = false) {
@@ -457,10 +456,9 @@ async function executeGeneration(settings, useRefs, onStatus) {
     items.push(item);
   }
   const secs = ((Date.now() - started) / 1000).toFixed(0);
-  const exec = result.executionTime ? ` (GPU time ${(result.executionTime / 1000).toFixed(1)}s)` : "";
-  const loraText = settings.loras?.length ? ` LoRA: ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.` : "";
-  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out wrong in a tall frame." : "";
-  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
+  // Kept short; the full details (model, add-ons, size) are in the gallery's picture view.
+  const wideText = settings.turnedWide ? " · made wide for the hogtie" : "";
+  return { items, summary: `Done in ${secs} s · picture no. ${settings.seed}${wideText}` };
 }
 
 const waitText = (secs) => `Waiting for a GPU worker… ${secs}s\n(The first job after a while idle takes about 1–2 minutes while the worker starts up and loads the model. Tip: press “Wake up GPU” when you sit down.)`;
@@ -515,16 +513,16 @@ async function wake() {
     // Warm the GPU and the model on the endpoint that runs it.
     const ids = [effectiveModelId()];
     const rs = await Promise.all(ids.map((id) => runJob({ workflow: warmupWorkflow(id) }, (st, secs) => {
-      btn.textContent = st === "IN_QUEUE" ? `Starting GPU… ${secs}s` : "Loading model…";
+      btn.textContent = st === "IN_QUEUE" ? `Starting up… ${secs}s` : "Almost ready…";
     }, false, endpointFor(id))));
     const r = rs.find((x) => x.status !== "COMPLETED");
     if (r) throw new Error(describeFailure(r));
-    btn.textContent = "GPU ready";
+    btn.textContent = "Ready";
     btn.classList.add("ready");
     btn.title = "A worker is warm. It shuts down after your endpoint's idle timeout.";
-    setTimeout(() => { btn.textContent = "Wake up GPU"; btn.classList.remove("ready"); }, 60000);
+    setTimeout(() => { btn.textContent = "Warm up"; btn.classList.remove("ready"); }, 60000);
   } catch (e) {
-    btn.textContent = "Wake up GPU";
+    btn.textContent = "Warm up";
     setStatus("Wake-up failed: " + (e.message || e), true);
   } finally {
     waking = false;
@@ -619,6 +617,7 @@ function openViewer(item) {
 
 function reuse(item) {
   const s = item.settings;
+  if (view !== "chat") setView("chat");
   // Images made with an older model reuse their prompt, seed and size with Qwen-Image 2.1.
   const panelModel = MAIN_MODEL;
   $("prompt").value = s.prompt; store.set("ui_prompt", s.prompt, true);
@@ -784,11 +783,9 @@ function initRefs() {
   refDb.all().then((all) => { refs = all.sort((a, b) => a.added - b.added); renderRefs(); }).catch(() => {});
 }
 
+// "Use as reference" from the gallery: attach the picture in the chat, where pictures are made.
 async function useAsReference(item) {
-  if (view === "chat") return editInChat(item);
-  if (!(await askConsent())) return;
-  await addRefs([new File([item.blob], "gallery.png", { type: "image/png" })]);
-  setStatus(`Added as image ${Math.min(refs.length, MAX_REFS)}. Say in the prompt what to do with it, e.g. “In image 1, change her shirt to red” or “the woman from image 1 …”.`);
+  return editInChat(item);
 }
 
 // ---------- Chat ----------
@@ -796,6 +793,25 @@ async function useAsReference(item) {
 let messages = [];
 let chatAttach = []; // [{ id, dataUrl }]
 let pending = null; // { status } while a chat job runs
+
+// ---------- Options drawer (menu button) ----------
+function setDrawer(open) {
+  $("drawer").classList.toggle("open", open);
+  $("drawerBackdrop").hidden = !open;
+  $("menuBtn").setAttribute("aria-expanded", String(open));
+  if (open) $("drawerClose").focus();
+}
+function initDrawer() {
+  $("menuBtn").addEventListener("click", () => setDrawer(!$("drawer").classList.contains("open")));
+  $("drawerClose").addEventListener("click", () => { setDrawer(false); $("menuBtn").focus(); });
+  $("drawerBackdrop").addEventListener("click", () => setDrawer(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("drawer").classList.contains("open") && !document.querySelector("dialog[open]")) setDrawer(false);
+  });
+  // Opening Settings or starting a new chat from the drawer closes it.
+  $("openSettings").addEventListener("click", () => setDrawer(false));
+  $("newChat").addEventListener("click", () => setDrawer(false));
+}
 
 function setView(v) {
   view = ["studio", "library"].includes(v) ? v : "chat";
@@ -911,7 +927,7 @@ async function sendChat(retryOf) {
       if (el) el.textContent = m;
     });
     reply.imageIds = items.map((i) => i.id);
-    reply.summary = `${MODELS[prep.settings.model].label.split(" —")[0]}${mode !== "none" ? ` · ${REF_MODES[mode]?.label || "Reference images"}` : ""} · ${summary}`;
+    reply.summary = summary;
   } catch (e) {
     reply.error = e.message || String(e);
   } finally {
@@ -950,7 +966,6 @@ async function renderThread() {
       b.textContent = msg.text;
       el.append(b);
       const notes = [];
-      if (msg.mode && msg.mode !== "none") notes.push(REF_MODES[msg.mode]?.label || "Reference images");
       if (msg.library?.length) notes.push("Library: " + msg.library.join(", "));
       if (notes.length) el.append(meta(notes.join(" · ")));
     } else if (msg.error) {
@@ -1464,6 +1479,7 @@ function setBusy(b) {
   applyCloudCreds();
   showStorage();
   initControls();
+  initDrawer();
   initRefs();
   initChat();
   initLibrary();
@@ -1474,7 +1490,7 @@ function setBusy(b) {
   updateConn();
   renderGallery();
   syncAll().catch(() => {});
-  if (!creds().key) setStatus("Start by opening Settings to connect your RunPod endpoint.");
+  if (!creds().key) setStatus("Not connected yet: open the menu (☰) and choose Settings.");
 })();
 // Pick up changes from other devices when you come back to this tab.
 window.addEventListener("focus", () => { if (Date.now() - lastSync > 60000) syncAll().catch(() => {}); });
