@@ -71,7 +71,7 @@ const MODELS = {
   },
 
   // Text-to-image and reference images in one model (Comfy-Org repackage, Turbo int8; ComfyUI 0.37+,
-  // see worker/start-qwen21.sh). Node layout follows the official "Qwen Image 2.1 Turbo" templates.
+  // see worker/start-qwen21.sh, which puts the files in the volume's unet/ and clip/ folders). Node layout follows the official "Qwen Image 2.1 Turbo" templates.
   // Reference images (refNames) are optional; the canvas size always comes from width/height.
   "qwen-image-21": {
     label: "Qwen-Image 2.1 — best quality, character photos",

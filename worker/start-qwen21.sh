@@ -53,11 +53,18 @@ log "volume space before: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}'
 # ---------- 1. Qwen-Image 2.1 model files ----------
 HF="https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 # path under models/ | bytes | sha256 (checked once, after the download)
+# The image's extra_model_paths.yaml maps the volume's unet/ and clip/ folders (not diffusion_models/ or
+# text_encoders/), so the files go there.
 FILES=(
-  "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors|7256787829|8144a0182964aa8403ad6dbc011db837304167d235161b9aabaa8532e967314c"
-  "text_encoders/qwen3vl_8b_int8_convrot.safetensors|9350798360|8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f"
+  "unet/qwen_image_2.1_turbo_int8_convrot.safetensors|7256787829|8144a0182964aa8403ad6dbc011db837304167d235161b9aabaa8532e967314c"
+  "clip/qwen3vl_8b_int8_convrot.safetensors|9350798360|8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f"
   "vae/qwen_image_2.1_vae_bf16.safetensors|675509688|bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
 )
+# Files downloaded by an earlier version of this script into folders ComfyUI doesn't read.
+for old in diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors:unet text_encoders/qwen3vl_8b_int8_convrot.safetensors:clip; do
+  src="$VOL/models/${old%%:*}"; dst="$VOL/models/${old##*:}/$(basename "${old%%:*}")"
+  if [ -f "$src" ] && [ ! -f "$dst" ]; then mkdir -p "$(dirname "$dst")" && mv "$src" "$dst" && log "moved ${old%%:*} to ${old##*:}/"; fi
+done
 need=0
 for e in "${FILES[@]}"; do
   IFS="|" read -r path bytes sum <<< "$e"
