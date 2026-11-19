@@ -17,7 +17,8 @@ VOL=/runpod-volume
 COMFY_VERSION="${COMFY_VERSION:-v0.46.0}"
 REPO_RAW="https://raw.githubusercontent.com/jonathanmlanger/artgenerator/${SCRIPT_REF:-wip-cloudflare-server}"
 SUMMARY=/runpod-volume/cache/start-qwen21-summary.log
-log() { echo "start-qwen21: $*"; echo "$(date -u +%H:%M:%S) $*" >> "$SUMMARY" 2>/dev/null || true; }
+WORKER="${RUNPOD_POD_ID:-$(hostname)}"
+log() { echo "start-qwen21: $*"; echo "$(date -u '+%m-%d %H:%M:%S') [$WORKER] $*" >> "$SUMMARY" 2>/dev/null || true; }
 
 if [ ! -d "$VOL" ]; then
   log "no network volume at $VOL; starting without changes"
@@ -26,9 +27,24 @@ fi
 mkdir -p "$VOL/cache" "$VOL/models"
 # Keep a copy of this script's output; at the end it is also rendered into an image in ComfyUI's input
 # folder (startup_log.png), so a job with LoadImage → SaveImage can show it when RunPod's logs aren't at hand.
-LOG="$VOL/cache/start-qwen21.log"
-: > "$SUMMARY"
+LOG="$VOL/cache/start-qwen21-$WORKER.log"
 exec > >(tee "$LOG") 2>&1
+log "---- start"
+
+# Several workers can start at once (e.g. while RunPod rolls out a settings change) and they share this
+# volume. Only one may download and fetch at a time, or they overwrite each other's partial files.
+LOCK="$VOL/cache/start-qwen21.lock"
+for i in $(seq 1 180); do
+  if mkdir "$LOCK" 2>/dev/null; then
+    echo "$WORKER" > "$LOCK/owner"
+    trap 'rm -rf "$LOCK"' EXIT
+    break
+  fi
+  age=$(( $(date +%s) - $(stat -c %Y "$LOCK" 2>/dev/null || date +%s) ))
+  if [ "$age" -gt 3600 ]; then log "removing a stale setup lock (${age}s old)"; rm -rf "$LOCK"; continue; fi
+  [ "$i" = 1 ] && log "worker $(cat "$LOCK/owner" 2>/dev/null) is setting up; waiting for it"
+  sleep 20
+done
 log "volume space before: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}')"
 
 # ---------- 1. Qwen-Image 2.1 model files ----------
@@ -76,8 +92,11 @@ SRC="$VOL/cache/comfyui-$COMFY_VERSION"
 if [ ! -f "$SRC/main.py" ]; then
   log "fetching ComfyUI $COMFY_VERSION"
   rm -rf "$SRC.tmp"
-  git clone -q --depth 1 --branch "$COMFY_VERSION" https://github.com/comfyanonymous/ComfyUI "$SRC.tmp" && mv "$SRC.tmp" "$SRC"
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "$COMFY_VERSION" https://github.com/comfyanonymous/ComfyUI "$SRC.tmp" \
+    && mv "$SRC.tmp" "$SRC" || log "ERROR: git clone of ComfyUI $COMFY_VERSION failed"
 fi
+# The shared part is done; the rest only touches this container.
+rm -rf "$LOCK"; trap - EXIT
 if [ -f "$SRC/main.py" ]; then
   # Dependencies first (same pins as the image's Dockerfile; torch 2.11 cu128 is already installed and kept).
   # Only replace the code once they installed, so a failure leaves the old, working ComfyUI in place.
