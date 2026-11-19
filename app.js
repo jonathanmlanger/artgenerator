@@ -519,8 +519,9 @@ async function wake() {
     if (r) throw new Error(describeFailure(r));
     btn.textContent = "Ready";
     btn.classList.add("ready");
-    btn.title = "A worker is warm. It shuts down after your endpoint's idle timeout.";
-    setTimeout(() => { btn.textContent = "Warm up"; btn.classList.remove("ready"); }, 60000);
+    btn.title = "Ready. It stays on for 5 minutes after each picture, then switches off to save money.";
+    // The image endpoint keeps a worker on for 5 minutes after its last job (RunPod idle timeout, 300 s).
+    setTimeout(() => { btn.textContent = "Warm up"; btn.classList.remove("ready"); }, 300000);
   } catch (e) {
     btn.textContent = "Warm up";
     setStatus("Wake-up failed: " + (e.message || e), true);
