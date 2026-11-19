@@ -16,7 +16,8 @@ set -uo pipefail
 VOL=/runpod-volume
 COMFY_VERSION="${COMFY_VERSION:-v0.46.0}"
 REPO_RAW="https://raw.githubusercontent.com/jonathanmlanger/artgenerator/${SCRIPT_REF:-wip-cloudflare-server}"
-log() { echo "start-qwen21: $*"; }
+SUMMARY=/runpod-volume/cache/start-qwen21-summary.log
+log() { echo "start-qwen21: $*"; echo "$(date -u +%H:%M:%S) $*" >> "$SUMMARY" 2>/dev/null || true; }
 
 if [ ! -d "$VOL" ]; then
   log "no network volume at $VOL; starting without changes"
@@ -26,6 +27,7 @@ mkdir -p "$VOL/cache" "$VOL/models"
 # Keep a copy of this script's output; at the end it is also rendered into an image in ComfyUI's input
 # folder (startup_log.png), so a job with LoadImage → SaveImage can show it when RunPod's logs aren't at hand.
 LOG="$VOL/cache/start-qwen21.log"
+: > "$SUMMARY"
 exec > >(tee "$LOG") 2>&1
 log "volume space before: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}')"
 
@@ -64,7 +66,7 @@ fi
 
 # ---------- 2. LoRA add-ons ----------
 if wget -qO "$VOL/cache/download-loras.sh" "$REPO_RAW/worker/download-loras.sh"; then
-  bash "$VOL/cache/download-loras.sh" "$VOL" 2>&1 | sed 's/^/start-qwen21: loras: /' || log "some LoRAs were not downloaded"
+  bash "$VOL/cache/download-loras.sh" "$VOL" 2>&1 | tr '\r' '\n' | grep -v '^ *$' | grep -viE '^#|%' | while IFS= read -r l; do log "loras: $l"; done
 else
   log "could not fetch download-loras.sh"
 fi
@@ -79,13 +81,14 @@ fi
 if [ -f "$SRC/main.py" ]; then
   # Dependencies first (same pins as the image's Dockerfile; torch 2.11 cu128 is already installed and kept).
   # Only replace the code once they installed, so a failure leaves the old, working ComfyUI in place.
-  if UV_CACHE_DIR="$VOL/cache/uv" UV_LINK_MODE=copy uv pip install --python /opt/venv/bin/python \
-       -r "$SRC/requirements.txt" "transformers>=4.50.3,<5" "huggingface-hub<1.0"; then
+  if UV_CACHE_DIR="$VOL/cache/uv" UV_LINK_MODE=copy NO_COLOR=1 uv pip install --no-progress --python /opt/venv/bin/python \
+       -r "$SRC/requirements.txt" "transformers>=4.50.3,<5" "huggingface-hub<1.0" > "$VOL/cache/uv-install.log" 2>&1; then
     (cd "$SRC" && tar --exclude=./models --exclude=./custom_nodes --exclude=./.git -cf - .) | (cd /comfyui && tar -xf -) \
       && log "ComfyUI is now $(python3 -c 'import sys; sys.path.insert(0, "/comfyui"); import comfyui_version; print(comfyui_version.__version__)' 2>/dev/null)" \
       || log "ERROR: copying ComfyUI $COMFY_VERSION failed"
   else
-    log "ERROR: installing ComfyUI $COMFY_VERSION dependencies failed; keeping the image's ComfyUI"
+    log "ERROR: installing ComfyUI $COMFY_VERSION dependencies failed; keeping the image's ComfyUI. uv said:"
+    tail -25 "$VOL/cache/uv-install.log" | while IFS= read -r l; do log "  uv: $l"; done
   fi
 else
   log "ERROR: could not fetch ComfyUI $COMFY_VERSION; keeping the image's ComfyUI"
@@ -93,10 +96,12 @@ fi
 
 log "volume space after: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}')"
 mkdir -p /comfyui/input
-/opt/venv/bin/python - "$LOG" /comfyui/input/startup_log.png <<'PY' || log "could not render the log image"
-import sys, textwrap
+/opt/venv/bin/python - "$SUMMARY" /comfyui/input/startup_log.png <<'PY' || log "could not render the log image"
+import sys, re, textwrap
 from PIL import Image, ImageDraw
-lines = [l for l in open(sys.argv[1], errors="replace").read().splitlines() if "%|" not in l][-150:]
+raw = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+raw = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
+lines = [re.sub(r"[^\x20-\x7e]", "?", l) for l in re.split(r"[\r\n]+", raw)]
 lines = [w for l in lines for w in (textwrap.wrap(l, 160) or [""])][-150:]
 img = Image.new("RGB", (1300, 14 * len(lines) + 20), "white")
 d = ImageDraw.Draw(img)
