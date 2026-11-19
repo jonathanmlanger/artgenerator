@@ -1,0 +1,41 @@
+# Builds worker/Dockerfile and publishes it to GitHub's container registry as
+# ghcr.io/jonathanmlanger/image-studio-worker:<tag> (tag = ComfyUI version) and :latest.
+name: Worker image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - worker/Dockerfile
+      - .github/workflows/worker-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # The base image is about 15 GB compressed; the runner needs most of its disk for it.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Log in to the GitHub container registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          VERSION=$(grep -oP '^ARG COMFYUI_VERSION=\K\S+' worker/Dockerfile)
+          IMAGE=ghcr.io/${{ github.repository_owner }}/image-studio-worker
+          docker build -f worker/Dockerfile -t "$IMAGE:comfyui-$VERSION" -t "$IMAGE:latest" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" worker
+          docker push "$IMAGE:comfyui-$VERSION"
+          docker push "$IMAGE:latest"
+          df -h /
