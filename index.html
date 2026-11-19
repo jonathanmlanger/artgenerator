@@ -104,6 +104,13 @@
       </div>
 
       <div id="galleryView" role="tabpanel" aria-labelledby="tabGallery" hidden>
+        <div id="galleryBar" class="gallery-bar">
+          <button id="gSelect" class="ghost" type="button">Select</button>
+          <span id="gCount" class="gallery-count" hidden></span>
+          <button id="gAll" class="ghost" type="button" hidden>Select all</button>
+          <button id="gDelete" class="ghost danger" type="button" hidden disabled>Delete</button>
+          <button id="gCancel" class="ghost" type="button" hidden>Cancel</button>
+        </div>
         <div id="gallery" class="gallery"></div>
         <p id="empty" class="empty">Your images will appear here.</p>
       </div>

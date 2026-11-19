@@ -580,6 +580,54 @@ function addPlaceholders(n, ratio) {
   });
 }
 
+// Select mode: tapping pictures ticks them for deleting several at once.
+let selecting = false;
+const selected = new Set(); // picture ids
+let galleryIds = [];
+
+function updateGalleryBar() {
+  $("gallery").classList.toggle("selecting", selecting);
+  $("gSelect").hidden = selecting || !galleryIds.length;
+  for (const id of ["gCount", "gAll", "gDelete", "gCancel"]) $(id).hidden = !selecting;
+  $("gCount").textContent = selected.size ? `${selected.size} selected` : "Tap pictures to select them";
+  $("gDelete").disabled = !selected.size;
+  $("gDelete").textContent = selected.size ? `Delete ${selected.size}` : "Delete";
+  $("gAll").textContent = selected.size && selected.size === galleryIds.length ? "Select none" : "Select all";
+}
+function setSelecting(on) {
+  selecting = on;
+  selected.clear();
+  for (const t of $("gallery").querySelectorAll(".tile.selected")) { t.classList.remove("selected"); t.setAttribute("aria-pressed", "false"); }
+  updateGalleryBar();
+}
+function initGallerySelect() {
+  $("gSelect").addEventListener("click", () => setSelecting(true));
+  $("gCancel").addEventListener("click", () => setSelecting(false));
+  $("gAll").addEventListener("click", () => {
+    const all = selected.size !== galleryIds.length;
+    selected.clear();
+    if (all) galleryIds.forEach((id) => selected.add(id));
+    for (const t of $("gallery").querySelectorAll(".tile[data-id]")) {
+      t.classList.toggle("selected", all);
+      t.setAttribute("aria-pressed", String(all));
+    }
+    updateGalleryBar();
+  });
+  $("gDelete").addEventListener("click", async () => {
+    const n = selected.size;
+    if (!n || !confirm(`Delete ${n} picture${n > 1 ? "s" : ""} from your gallery? This can't be undone.`)) return;
+    $("gDelete").disabled = true;
+    for (const id of [...selected]) await db.remove(id);
+    setSelecting(false);
+    await renderGallery();
+    if (view === "chat") renderThread();
+    setStatus(`Deleted ${n} picture${n > 1 ? "s" : ""}.`);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && selecting && view === "studio" && !document.querySelector("dialog[open]")) setSelecting(false);
+  });
+}
+
 async function renderGallery() {
   const items = (await db.all()).sort((a, b) => b.created - a.created);
   const g = $("gallery");
@@ -589,16 +637,29 @@ async function renderGallery() {
     seen.add(item.id);
     if (!urls.has(item.id)) urls.set(item.id, URL.createObjectURL(item.blob));
     const b = document.createElement("button");
-    b.className = "tile";
+    b.className = "tile" + (selected.has(item.id) ? " selected" : "");
+    b.dataset.id = item.id;
+    b.setAttribute("aria-pressed", String(selected.has(item.id)));
     b.style.aspectRatio = `${item.settings.width} / ${item.settings.height}`;
     const img = document.createElement("img");
     img.src = urls.get(item.id);
     img.alt = item.settings.prompt.slice(0, 120);
     img.loading = "lazy";
     b.append(img);
-    b.addEventListener("click", () => openViewer(item));
+    b.addEventListener("click", () => {
+      if (!selecting) return openViewer(item);
+      const on = !selected.has(item.id);
+      if (on) selected.add(item.id); else selected.delete(item.id);
+      b.classList.toggle("selected", on);
+      b.setAttribute("aria-pressed", String(on));
+      updateGalleryBar();
+    });
     g.append(b);
   }
+  // Pictures deleted elsewhere (e.g. another device via sync) drop out of the selection.
+  galleryIds = items.map((i) => i.id);
+  for (const id of [...selected]) if (!seen.has(id)) selected.delete(id);
+  updateGalleryBar();
   for (const [id, u] of urls) if (!seen.has(id)) { URL.revokeObjectURL(u); urls.delete(id); }
   $("empty").hidden = items.length > 0 || g.children.length > 0;
 }
@@ -815,6 +876,7 @@ function initDrawer() {
 }
 
 function setView(v) {
+  if (selecting) setSelecting(false);
   view = ["studio", "library"].includes(v) ? v : "chat";
   store.set("ui_view", view, true);
   document.body.dataset.view = view;
@@ -1481,6 +1543,7 @@ function setBusy(b) {
   showStorage();
   initControls();
   initDrawer();
+  initGallerySelect();
   initRefs();
   initChat();
   initLibrary();
