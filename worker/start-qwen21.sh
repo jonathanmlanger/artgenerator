@@ -49,15 +49,15 @@ log "volume space before: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}'
 
 # ---------- 1. Qwen-Image 2.1 model files ----------
 HF="https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
-# path under models/ | bytes
+# path under models/ | bytes | sha256 (checked once, after the download)
 FILES=(
-  "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors|7256787829"
-  "text_encoders/qwen3vl_8b_int8_convrot.safetensors|9350798360"
-  "vae/qwen_image_2.1_vae_bf16.safetensors|675509688"
+  "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors|7256787829|8144a0182964aa8403ad6dbc011db837304167d235161b9aabaa8532e967314c"
+  "text_encoders/qwen3vl_8b_int8_convrot.safetensors|9350798360|8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f"
+  "vae/qwen_image_2.1_vae_bf16.safetensors|675509688|bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
 )
 need=0
 for e in "${FILES[@]}"; do
-  IFS="|" read -r path bytes <<< "$e"
+  IFS="|" read -r path bytes sum <<< "$e"
   f="$VOL/models/$path"
   have=$(stat -c %s "$f" 2>/dev/null || echo 0)
   [ "$have" = "$bytes" ] || need=$((need + bytes - $(stat -c %s "$f.part" 2>/dev/null || echo 0)))
@@ -67,15 +67,21 @@ if [ "$need" -gt 0 ] && [ "$free" -lt $((need + 2000000000)) ]; then
   log "NOT downloading Qwen-Image 2.1: needs $((need / 1000000000)) GB, only $((free / 1000000000)) GB free. Enlarge the network volume."
 else
   for e in "${FILES[@]}"; do
-    IFS="|" read -r path bytes <<< "$e"
+    IFS="|" read -r path bytes sum <<< "$e"
     f="$VOL/models/$path"
     [ "$(stat -c %s "$f" 2>/dev/null || echo 0)" = "$bytes" ] && { log "have $path"; continue; }
     mkdir -p "$(dirname "$f")"
+    # A partial file larger than the real one is damaged (e.g. by writes while the volume was full).
+    if [ "$(stat -c %s "$f.part" 2>/dev/null || echo 0)" -gt "$bytes" ]; then log "removing damaged partial $path"; rm -f "$f.part"; fi
     log "downloading $path ($((bytes / 1000000)) MB)"
-    if wget -q -c --tries=5 --waitretry=5 -O "$f.part" "$HF/$path" && [ "$(stat -c %s "$f.part")" = "$bytes" ]; then
-      mv "$f.part" "$f"
+    err=$(wget -nv -c --tries=5 --waitretry=5 -O "$f.part" "$HF/$path" 2>&1 | tail -3)
+    got=$(stat -c %s "$f.part" 2>/dev/null || echo 0)
+    if [ "$got" != "$bytes" ]; then
+      log "ERROR: $path is $got of $bytes bytes after the download; it resumes on the next start. wget: $err"
+    elif [ "$(sha256sum "$f.part" | cut -d" " -f1)" != "$sum" ]; then
+      log "ERROR: $path has the wrong checksum; deleted, it downloads again on the next start"; rm -f "$f.part"
     else
-      log "ERROR: download of $path failed or is the wrong size; it resumes on the next start"
+      mv "$f.part" "$f" && log "downloaded $path"
     fi
   done
 fi
