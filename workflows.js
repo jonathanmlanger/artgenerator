@@ -3,6 +3,42 @@
 // Each builder receives the user's settings and returns a workflow object for worker-comfyui.
 
 const MODELS = {
+  // Text-to-image and reference images in one model (Comfy-Org repackage, Turbo int8; ComfyUI 0.37+,
+  // see worker/start-qwen21.sh, which puts the files in the volume's unet/ and clip/ folders). Node layout follows the official "Qwen Image 2.1 Turbo" templates.
+  // Reference images (refNames) are optional; the canvas size always comes from width/height.
+  "qwen-image-21": {
+    label: "Qwen-Image 2.1 — best quality (recommended)",
+    note: "8 steps, coherent bodies and faces. With the bondage megapack add-on it draws hogties, chair ties and gags well. Also used for character photos (Character / scene reference). Describe the pose, ropes and gag in plain sentences.",
+    needsUpgrade: false, // set up by worker/start-qwen21.sh, not the README's Step 6
+    endpoint: "edit", // its files and the newer ComfyUI are set up on the edit endpoint (worker/start-qwen21.sh)
+    supportsNegative: false,
+    defaults: { steps: 8, cfg: 1 },
+    build: (s) => {
+      const g = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "qwen_image_2.1_turbo_int8_convrot.safetensors", weight_dtype: "default" } },
+        "2": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_int8_convrot.safetensors", type: "qwen_image", device: "default" } },
+        "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_2.1_vae_bf16.safetensors" } },
+        "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
+        "5": { class_type: "TextEncodeQwenImage21", inputs: { clip: ["2", 0], vae: ["3", 0], prompt: s.prompt, negative_prompt: "", resolution: 1024 } },
+        "6": { class_type: "EmptyLatentImage", inputs: { width: s.width, height: s.height, batch_size: s.count } },
+        // The Turbo model's own 8-step schedule from the template.
+        "7": { class_type: "ManualSigmas", inputs: { sigmas: "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0" } },
+        "8": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
+        "9": { class_type: "RandomNoise", inputs: { noise_seed: s.seed } },
+        "11": { class_type: "CFGGuider", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["5", 1], cfg: 1 } },
+        "12": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["11", 0], sampler: ["8", 0], sigmas: ["7", 0], latent_image: ["6", 0] } },
+        "13": { class_type: "VAEDecode", inputs: { samples: ["12", 0], vae: ["3", 0] } },
+        "10": { class_type: "SaveImage", inputs: { images: ["13", 0], filename_prefix: "studio" } },
+      };
+      (s.refNames || []).slice(0, 3).forEach((name, i) => {
+        const id = String(30 + i);
+        g[id] = { class_type: "LoadImage", inputs: { image: name } };
+        g["5"].inputs[`images.image_${i + 1}`] = [id, 0];
+      });
+      return g;
+    },
+  },
+
   "z-image-turbo": {
     label: "Z-Image Turbo — fast photoreal",
     note: "8 steps, ~5–10 s per image when warm. No negative prompt (turbo models ignore it).",
@@ -70,45 +106,10 @@ const MODELS = {
     }),
   },
 
-  // Text-to-image and reference images in one model (Comfy-Org repackage, Turbo int8; ComfyUI 0.37+,
-  // see worker/start-qwen21.sh, which puts the files in the volume's unet/ and clip/ folders). Node layout follows the official "Qwen Image 2.1 Turbo" templates.
-  // Reference images (refNames) are optional; the canvas size always comes from width/height.
-  "qwen-image-21": {
-    label: "Qwen-Image 2.1 — best quality, character photos",
-    note: "Fast (8 steps), coherent bodies, and can use your character photo directly. Refer to it as “image 1”. Runs on the edit endpoint.",
-    needsUpgrade: true,
-    hidden: true, // not offered in the app until tested on the edit endpoint
-    supportsNegative: false,
-    defaults: { steps: 8, cfg: 1 },
-    build: (s) => {
-      const g = {
-        "1": { class_type: "UNETLoader", inputs: { unet_name: "qwen_image_2.1_turbo_int8_convrot.safetensors", weight_dtype: "default" } },
-        "2": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_int8_convrot.safetensors", type: "qwen_image", device: "default" } },
-        "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_2.1_vae_bf16.safetensors" } },
-        "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
-        "5": { class_type: "TextEncodeQwenImage21", inputs: { clip: ["2", 0], vae: ["3", 0], prompt: s.prompt, negative_prompt: "", resolution: 1024 } },
-        "6": { class_type: "EmptyLatentImage", inputs: { width: s.width, height: s.height, batch_size: s.count } },
-        // The Turbo model's own 8-step schedule from the template.
-        "7": { class_type: "ManualSigmas", inputs: { sigmas: "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0" } },
-        "8": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
-        "9": { class_type: "RandomNoise", inputs: { noise_seed: s.seed } },
-        "11": { class_type: "CFGGuider", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["5", 1], cfg: 1 } },
-        "12": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["11", 0], sampler: ["8", 0], sigmas: ["7", 0], latent_image: ["6", 0] } },
-        "13": { class_type: "VAEDecode", inputs: { samples: ["12", 0], vae: ["3", 0] } },
-        "10": { class_type: "SaveImage", inputs: { images: ["13", 0], filename_prefix: "studio" } },
-      };
-      (s.refNames || []).slice(0, 3).forEach((name, i) => {
-        const id = String(30 + i);
-        g[id] = { class_type: "LoadImage", inputs: { image: name } };
-        g["5"].inputs[`images.image_${i + 1}`] = [id, 0];
-      });
-      return g;
-    },
-  },
-
   // Used only by the "Character / scene reference" mode.
   "qwen-edit": {
     label: "Qwen Image Edit 2511 — reference images",
+    endpoint: "edit",
     note: "Uses your reference images directly. Refer to them in the prompt as “image 1”, “image 2”, “image 3”. Requires the Step 6 upgrade; a 48 GB GPU is recommended.",
     needsUpgrade: true,
     supportsNegative: false,
@@ -160,8 +161,8 @@ const REF_MODES = {
   },
   character: {
     label: "Character / scene reference",
-    note: "Image 1 = your character. With bondage add-ons on (the default), the scene is made first from your prompt with the add-ons, then the person from image 1 is put into it; only image 1 is used. Write prompts like “The woman from image 1, hogtied on a bed with a red ballgag.” With add-ons off: up to 3 images (e.g. image 2 = a pose or setting). Requires the Step 6 upgrade.",
-    maxImages: 3, model: "qwen-edit", needsUpgrade: true, strength: null,
+    note: "Up to 3 images: image 1 = your character (image 2, 3 = e.g. a setting or an outfit). Qwen-Image 2.1 draws the whole scene with the person from image 1, with the bondage add-on on. Write prompts like “The woman from image 1 is lying on a wooden floor, hogtied with red rope, with a red ball gag in her mouth.”",
+    maxImages: 3, model: "qwen-image-21", needsUpgrade: true, strength: null,
   },
 };
 
@@ -232,6 +233,31 @@ const LORAS = {
     yieldsTo: "ball-gags",
     forceKeywords: /\b(large|big|huge|giant|oversized)\b[\w ,-]{0,20}?\bball[- ]?gag/i,
   },
+  "bondage-megapack": {
+    label: "Bondage & gags megapack",
+    file: "bondage_megapack_qwen21.safetensors",
+    models: ["qwen-image-21"],
+    strength: 1.0,
+    fullStrength: true, // its author recommends 1.0 (1.2 if bodies warp); automatic mode doesn't lower it
+    note: "Rope ties (hogtie, chair tie, elbows, full body), tape, and ball, cleave, tape, over-the-mouth, ring and panel gags. Write plain sentences, e.g. “Her ankles are tied to her bound wrists” or “a red ball gag in her mouth fastened with black leather straps”.",
+    source: "https://civitai.com/models/2994404",
+    keywords: /\b(hog[- ]?tie[ds]?|ball[- ]?gag(s|ged)?|gag(s|ged)?|rope[sd]?|tied|bound|bondage|restrained|tape[d]?|cuff(s|ed)?|shibari)\b/i,
+    // Short prompts ("hogtied with a ballgag") often miss the pose; the LoRA was trained on these
+    // descriptions (from its Civitai page), so automatic mode adds the matching ones behind the scenes.
+    promptHints: [
+      [/\bhog[- ]?(tie[ds]?|tying)\b/i, "She is lying on her stomach, bound in a hogtied pose with her arms pulled behind her back and her legs bent upwards. Her wrists and ankles are tied with rope, and her ankles are tied to her bound wrists."],
+      [/\b(tied to a chair|chair[- ]?tie[ds]?|bound to a chair)\b/i, "She is sitting on a chair, bound to it with rope wrapped around her chest and the chair back, her wrists tied behind the chair and her ankles tied to the chair legs."],
+      [/\bball[- ]?gag(s|ged)?\b/i, "She has a ball gag in her mouth fastened with leather straps behind her head."],
+      [/\bcleave[- ]?gag(s|ged)?\b/i, "She has a strip of cloth cleave gag between her lips fastened behind her head."],
+      [/\btape[- ]?gag(s|ged)?\b/i, "She has a tape gag wrapped tightly around her mouth, looping behind her head."],
+      [/\b(otm|over[- ]the[- ]mouth)\b/i, "She has a wide strip of cloth covering her mouth as a gag, fastened behind her head."],
+    ],
+    // Without clothes in the prompt, this LoRA drifts towards underwear or nudity (tested), so automatic
+    // mode adds this when the prompt names no clothing.
+    clothingHint: "She is fully clothed, wearing a long-sleeved sweater and full-length jeans.",
+    // A lying-down pose comes out sitting or kneeling in a tall frame (tested), so hogties use landscape.
+    widePrompt: /\bhog[- ]?(tie[ds]?|tying)\b/i,
+  },
   "hogtie": {
     label: "Hogtie",
     // Separate Turbo and Base versions of the same LoRA.
@@ -255,7 +281,7 @@ const LORAS = {
 // so every image leans towards bondage. Several LoRAs at full strength fight each other, so
 // strengths drop as more are picked; a pose LoRA keeps full strength and the others drop further,
 // because the pose is what goes missing first (tested).
-const AUTO_DEFAULT_LORA = "rope-bound";
+const AUTO_DEFAULT_LORAS = ["rope-bound", "bondage-megapack"]; // first one the model can use
 const AUTO_STRENGTHS = [0.8, 0.65, 0.55]; // for 1, 2, 3+ LoRAs
 function autoLoras(prompt, modelId) {
   const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
@@ -270,10 +296,13 @@ function autoLoras(prompt, modelId) {
     drop.add(l.forceKeywords?.test(text) ? l.yieldsTo : id);
   }
   picked = picked.filter(([id]) => !drop.has(id));
-  if (!picked.length) picked = usable.filter(([id]) => id === AUTO_DEFAULT_LORA);
+  if (!picked.length) {
+    const id = AUTO_DEFAULT_LORAS.find((d) => usable.some(([u]) => u === d));
+    picked = usable.filter(([u]) => u === id);
+  }
   const cap = AUTO_STRENGTHS[Math.min(picked.length, AUTO_STRENGTHS.length) - 1];
   const hasPose = picked.length > 1 && picked.some(([, l]) => l.pose);
-  const strengthOf = (l) => !hasPose ? Math.min(l.strength, cap)
+  const strengthOf = (l) => l.fullStrength ? l.strength : !hasPose ? Math.min(l.strength, cap)
     : l.pose ? l.strength : Math.max(0.4, Math.round((cap - 0.15) * 100) / 100);
   return picked.map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: strengthOf(l) }));
 }
@@ -310,10 +339,23 @@ function characterSwapPrompt() {
     `the same: the pose, the head position, the ropes, her clothes, the setting, the camera angle and the lighting.`;
 }
 
-// [width, height] to use: portrait sizes turn to landscape when a "wide" LoRA (a lying-down pose) is used.
-function sizeForLoras(width, height, loras) {
-  const wide = (loras || []).some((l) => LORAS[l.id]?.wide);
+// [width, height] to use: portrait sizes turn to landscape for a lying-down pose: a "wide" LoRA, or a
+// LoRA whose widePrompt matches the prompt.
+function sizeForLoras(width, height, loras, prompt = "") {
+  const wide = (loras || []).some((l) => LORAS[l.id]?.wide || LORAS[l.id]?.widePrompt?.test(prompt));
   return wide && height > width ? [height, width] : [width, height];
+}
+
+const CLOTHING_WORDS = /\b(wear(s|ing)?|dressed|clothes|clothed|clothing|outfit|shirt|t-shirt|blouse|top|sweater|jumper|hoodie|cardigan|jacket|coat|dress|skirt|jeans|pants|trousers|leggings|shorts|uniform|suit|pyjamas|pajamas|lingerie|bra|panties|underwear|bikini|swimsuit|nude|naked|topless)\b/i;
+
+// Sentences the picked LoRAs add to the prompt (see promptHints and clothingHint), as one string
+// starting with a space.
+function loraPromptHints(prompt, loras) {
+  const ls = (loras || []).map((l) => LORAS[l.id]).filter(Boolean);
+  const hints = ls.flatMap((l) => (l.promptHints || []).filter(([re]) => re.test(prompt)).map(([, h]) => h));
+  const clothing = ls.find((l) => l.clothingHint)?.clothingHint;
+  if (clothing && !CLOTHING_WORDS.test(prompt)) hints.push(clothing);
+  return hints.length ? " " + hints.join(" ") : "";
 }
 
 // The LoRA file to load for a model: per-model files win over the shared one.

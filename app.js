@@ -31,7 +31,7 @@ const creds = () => server
   : { key: store.get("rp_key") || "", endpoint: store.get("rp_endpoint") || "", editEndpoint: store.get("rp_edit_endpoint") || "" };
 // Character / scene reference (Qwen Image Edit) can run on its own endpoint so each GPU worker
 // only holds one set of large models; it falls back to the main endpoint if none is set.
-const endpointFor = (modelId) => (modelId === "qwen-edit" && creds().editEndpoint) || creds().endpoint;
+const endpointFor = (modelId) => (MODELS[modelId]?.endpoint === "edit" && creds().editEndpoint) || creds().endpoint;
 
 async function rp(path, opts = {}, endpointOverride) {
   const { key } = creds();
@@ -268,7 +268,7 @@ function initControls() {
     o.textContent = m.label + (m.needsUpgrade ? " (after upgrade)" : "");
     modelSel.append(o);
   }
-  modelSel.value = MODELS[store.get("ui_model")] && !MODELS[store.get("ui_model")].hidden ? store.get("ui_model") : "z-image-turbo";
+  modelSel.value = MODELS[store.get("ui_model")] && !MODELS[store.get("ui_model")].hidden ? store.get("ui_model") : "qwen-image-21";
   modelSel.addEventListener("change", () => { store.set("ui_model", modelSel.value, true); applyModel(true); });
 
   const sizes = $("sizes");
@@ -488,8 +488,11 @@ function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("r
     }
   }
   // A lying-down pose (hogtie) comes out head-down in a tall frame, so use landscape for it.
-  const [w, h] = sizeForLoras(settings.width, settings.height, settings.loras);
+  const [w, h] = sizeForLoras(settings.width, settings.height, settings.loras, prompt);
   if (w !== settings.width) { settings.width = w; settings.height = h; settings.turnedWide = true; }
+  // Automatic mode also spells out the pose and gag the way the LoRA was trained (kept apart from the
+  // prompt, so reusing an image's settings doesn't repeat it).
+  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras);
   return { settings, useRefs };
 }
 
@@ -498,7 +501,8 @@ async function executeGeneration(settings, useRefs, onStatus) {
   if (settings.scene) return executeCharacterScene(settings, useRefs, onStatus);
   const started = Date.now();
   onStatus(useRefs.length ? "Uploading reference images and sending job…" : "Sending job to RunPod…");
-  const workflow = applyLoras(applyReference(MODELS[settings.model].build(settings), settings), settings.loras);
+  const built = { ...settings, prompt: settings.prompt + (settings.promptExtra || "") };
+  const workflow = applyLoras(applyReference(MODELS[settings.model].build(built), built), settings.loras);
   const input = { workflow };
   if (useRefs.length) input.images = useRefs.map((r, i) => ({ name: settings.refNames[i], image: r.dataUrl }));
   const result = await runJob(input, (st, secs) => {
@@ -518,7 +522,7 @@ async function executeGeneration(settings, useRefs, onStatus) {
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   const exec = result.executionTime ? ` (GPU time ${(result.executionTime / 1000).toFixed(1)}s)` : "";
   const loraText = settings.loras?.length ? ` LoRA: ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.` : "";
-  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out upside down in a tall frame." : "";
+  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out wrong in a tall frame." : "";
   return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
 }
 
@@ -566,7 +570,7 @@ async function executeCharacterScene(settings, useRefs, onStatus) {
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   const exec = gpu ? ` (GPU time ${(gpu / 1000).toFixed(1)}s)` : "";
   const loraText = ` Scene: ${MODELS[sc.model].label.split(" —")[0]} with ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.`;
-  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out upside down in a tall frame." : "";
+  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out wrong in a tall frame." : "";
   return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
 }
 
