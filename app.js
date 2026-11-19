@@ -375,10 +375,10 @@ function renderLoras() {
 function updateLoraPreview() {
   const el = document.getElementById("loraAutoPreview");
   if (!el) return;
-  if (!loraAuto()) { el.textContent = "Off: choose add-ons yourself below, or switch it back on."; return; }
+  if (!loraAuto()) { el.textContent = "Off: pick add-ons below."; return; }
   const prompt = (view === "chat" ? $("chatInput") : $("prompt")).value;
   const picked = autoLoras(prompt, effectiveModelId());
-  el.textContent = "Helps with ropes, hogties, chair ties and gags, and fills in the details of the pose and gag you describe.";
+  el.textContent = "";
 }
 
 function setStatus(msg, isError = false) {

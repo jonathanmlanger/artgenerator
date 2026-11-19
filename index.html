@@ -36,7 +36,6 @@
 
       <label>Shape</label>
       <div id="sizes" class="chips" role="radiogroup"></div>
-      <p class="hint">Auto keeps the shape of the picture you're editing, and makes hogties wide.</p>
 
       <label for="count">How many pictures</label>
       <select id="count"><option>1</option><option>2</option><option>3</option><option>4</option></select>
@@ -67,8 +66,7 @@
       <details class="advanced">
         <summary>More options</summary>
         <label for="seed">Repeat a picture</label>
-        <input id="seed" type="number" placeholder="Leave empty for a new picture each time" min="0">
-        <p class="hint">Enter the number shown under a picture to make it again (useful for small changes to the description).</p>
+        <input id="seed" type="number" placeholder="Picture number (optional)" min="0">
       </details>
 
       <div class="studio-only">
@@ -87,10 +85,7 @@
 
       <div id="chatView" class="chat" role="tabpanel" aria-labelledby="tabChat">
         <div id="thread" class="thread">
-          <div id="chatEmpty" class="chat-empty">
-            <p><strong>Describe the picture you want and press Enter.</strong></p>
-            <p>Add up to 3 pictures with <strong>+</strong> (or paste / drop them). They're image 1, 2 and 3, so you can write “the woman from image 1, hogtied on a bed with a red ballgag” or “in image 1, change her shirt to red”. Tap <em>Edit</em> under a result to keep working on it.</p>
-          </div>
+          <div id="chatEmpty" class="chat-empty"></div>
         </div>
         <form id="composer" class="composer">
           <div id="attachRow" class="attach-row" hidden>
@@ -115,7 +110,7 @@
 
       <div id="libraryView" role="tabpanel" aria-labelledby="tabLibrary" hidden>
         <div class="lib-head">
-          <p class="hint">Save words the picture-maker gets wrong, each with a clear description and example pictures. When you use the word in a message, a chip appears under the message box: the description is added for you, and <em>+ example</em> also attaches the first example picture.</p>
+          <p class="hint">Words with their own description and example pictures, added when you use them in a message.</p>
           <button id="libNew" class="primary">New entry</button>
         </div>
         <div id="libList" class="lib-list"></div>

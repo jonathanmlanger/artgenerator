@@ -273,3 +273,4 @@ dialog h3 { font-size: 15px; margin: 22px 0 0; padding-top: 16px; border-top: 1p
 .lib-chip .ex { border-left: 1px solid var(--accent); }
 @media (max-width: 600px) { .lib-head { flex-direction: column; } }
 .banner { margin: 0; padding: 10px 20px; background: color-mix(in srgb, #e0a100 18%, var(--panel)); border-bottom: 1px solid var(--border); font-size: 14px; }
+.hint:empty { display: none; }
