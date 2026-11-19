@@ -463,7 +463,7 @@ async function executeGeneration(settings, useRefs, onStatus) {
   return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
 }
 
-const waitText = (secs) => `Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take about 3 minutes while the worker starts up and loads the model. Tip: press “Wake up GPU” when you sit down.)`;
+const waitText = (secs) => `Waiting for a GPU worker… ${secs}s\n(The first job after a while idle takes about 1–2 minutes while the worker starts up and loads the model. Tip: press “Wake up GPU” when you sit down.)`;
 
 async function generate() {
   if (currentJob || busy) return;
