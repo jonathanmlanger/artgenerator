@@ -896,7 +896,6 @@ function initChat() {
   $("tabLibrary").addEventListener("click", () => setView("library"));
   $("newChat").addEventListener("click", async () => {
     if (pending) return;
-    if (messages.length && !confirm("Start a new chat? Your images stay in the Gallery.")) return;
     await chatDb.clear();
     messages = [];
     renderThread();
