@@ -96,17 +96,33 @@ fi
 
 log "volume space after: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}')"
 mkdir -p /comfyui/input
-/opt/venv/bin/python - "$SUMMARY" /comfyui/input/startup_log.png <<'PY' || log "could not render the log image"
-import sys, re, textwrap
+/opt/venv/bin/python - "$VOL" "$COMFY_VERSION" /comfyui/input/startup_log.png <<'PY' || log "could not render the log image"
+# A status report rendered as an image (see the top of this script).
+import os, re, sys, glob, textwrap, subprocess
 from PIL import Image, ImageDraw
-raw = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
-raw = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
-lines = [re.sub(r"[^\x20-\x7e]", "?", l) for l in re.split(r"[\r\n]+", raw)]
-lines = [w for l in lines for w in (textwrap.wrap(l, 160) or [""])][-150:]
-img = Image.new("RGB", (1300, 14 * len(lines) + 20), "white")
+vol, ver, out = sys.argv[1:4]
+def read(p, n=None):
+    try:
+        t = open(p, "rb").read().decode("utf-8", "replace")
+    except OSError as e:
+        return [f"({p}: {e.strerror})"]
+    t = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", t)
+    ls = [re.sub(r"[^\x20-\x7e]", "?", l) for l in re.split(r"[\r\n]+", t) if l.strip()]
+    return ls[-n:] if n else ls
+L = []
+L.append("ComfyUI in /comfyui: " + " ".join(read("/comfyui/comfyui_version.py")[-1:]))
+L.append(f"cached source {ver}: " + ("present" if os.path.isfile(f"{vol}/cache/comfyui-{ver}/main.py") else "MISSING"))
+L.append("QwenImage21 nodes in /comfyui: " + str(bool(subprocess.run(["grep", "-rl", "QwenImage21Cache", "/comfyui/comfy_extras", "/comfyui/comfy_api_nodes"], capture_output=True).stdout)))
+L.append("disk: " + subprocess.run(["df", "-h", vol], capture_output=True, text=True).stdout.replace("\n", " | "))
+for f in sorted(glob.glob(f"{vol}/models/*/*qwen_image_2.1*") + glob.glob(f"{vol}/models/*/qwen3vl*") + glob.glob(f"{vol}/models/loras/*qwen21*")):
+    L.append(f"  {f} {os.path.getsize(f)}")
+L.append("--- summary ---"); L += read(f"{vol}/cache/start-qwen21-summary.log", 60)
+L.append("--- uv install (last 40) ---"); L += read(f"{vol}/cache/uv-install.log", 40)
+L = [w for l in L for w in (textwrap.wrap(l, 160) or [""])][-160:]
+img = Image.new("RGB", (1300, 14 * len(L) + 20), "white")
 d = ImageDraw.Draw(img)
-for i, l in enumerate(lines):
+for i, l in enumerate(L):
     d.text((10, 10 + 14 * i), l, fill="black")
-img.save(sys.argv[2])
+img.save(out)
 PY
 exec /start.sh
