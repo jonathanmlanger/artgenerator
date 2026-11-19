@@ -70,6 +70,42 @@ const MODELS = {
     }),
   },
 
+  // Text-to-image and reference images in one model (Comfy-Org repackage, Turbo int8; ComfyUI 0.37+,
+  // see worker/start-qwen21.sh). Node layout follows the official "Qwen Image 2.1 Turbo" templates.
+  // Reference images (refNames) are optional; the canvas size always comes from width/height.
+  "qwen-image-21": {
+    label: "Qwen-Image 2.1 — best quality, character photos",
+    note: "Fast (8 steps), coherent bodies, and can use your character photo directly. Refer to it as “image 1”. Runs on the edit endpoint.",
+    needsUpgrade: true,
+    hidden: true, // not offered in the app until tested on the edit endpoint
+    supportsNegative: false,
+    defaults: { steps: 8, cfg: 1 },
+    build: (s) => {
+      const g = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "qwen_image_2.1_turbo_int8_convrot.safetensors", weight_dtype: "default" } },
+        "2": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_int8_convrot.safetensors", type: "qwen_image", device: "default" } },
+        "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_2.1_vae_bf16.safetensors" } },
+        "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
+        "5": { class_type: "TextEncodeQwenImage21", inputs: { clip: ["2", 0], vae: ["3", 0], prompt: s.prompt, negative_prompt: "", resolution: 1024 } },
+        "6": { class_type: "EmptyLatentImage", inputs: { width: s.width, height: s.height, batch_size: s.count } },
+        // The Turbo model's own 8-step schedule from the template.
+        "7": { class_type: "ManualSigmas", inputs: { sigmas: "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0" } },
+        "8": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
+        "9": { class_type: "RandomNoise", inputs: { noise_seed: s.seed } },
+        "11": { class_type: "CFGGuider", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["5", 1], cfg: 1 } },
+        "12": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["11", 0], sampler: ["8", 0], sigmas: ["7", 0], latent_image: ["6", 0] } },
+        "13": { class_type: "VAEDecode", inputs: { samples: ["12", 0], vae: ["3", 0] } },
+        "10": { class_type: "SaveImage", inputs: { images: ["13", 0], filename_prefix: "studio" } },
+      };
+      (s.refNames || []).slice(0, 3).forEach((name, i) => {
+        const id = String(30 + i);
+        g[id] = { class_type: "LoadImage", inputs: { image: name } };
+        g["5"].inputs[`images.image_${i + 1}`] = [id, 0];
+      });
+      return g;
+    },
+  },
+
   // Used only by the "Character / scene reference" mode.
   "qwen-edit": {
     label: "Qwen Image Edit 2511 — reference images",
