@@ -21,9 +21,7 @@
   <p id="storageWarn" class="banner" role="status" hidden></p>
   <main class="layout">
     <section class="panel controls" aria-label="Generation settings">
-      <label for="model">Model</label>
-      <select id="model"></select>
-      <p id="modelNote" class="hint"></p>
+      <p class="hint">Made with Qwen-Image 2.1. Attach up to 3 images and say in the prompt what to do with them: “the woman from image 1…”, “…in the pose from image 2”, “In image 1, change her shirt to red”.</p>
       <div id="loraWrap" class="lora-wrap" hidden>
         <label>Bondage add-ons (LoRAs)</label>
         <div id="loraList"></div>
@@ -35,35 +33,19 @@
         <div id="libChipsStudio" class="lib-chips" hidden></div>
       </div>
 
-      <div id="negWrap">
-        <label for="negative">Negative prompt <span class="hint-inline">(what to avoid)</span></label>
-        <textarea id="negative" rows="3"></textarea>
-      </div>
-
       <div class="studio-only">
-      <label for="refMode">Reference image</label>
-      <select id="refMode"></select>
-      <div id="refWrap" class="ref-wrap" hidden>
-        <p id="refNote" class="hint"></p>
+      <label>Images <span class="hint-inline">(optional; image 1, 2, 3)</span></label>
+      <div id="refWrap" class="ref-wrap">
         <div id="refList" class="refs"></div>
         <p id="refHint" class="hint attach-hint" hidden></p>
         <label id="refAdd" class="button ghost upload">Add image
           <input id="refFile" type="file" accept="image/*" multiple hidden>
         </label>
         <span class="hint-inline">or drag &amp; drop / paste</span>
-        <div id="strengthWrap">
-          <label for="refStrength">Strength <span id="strengthVal" class="hint-inline"></span></label>
-          <input id="refStrength" type="range" min="0.1" max="1" step="0.05">
-        </div>
       </div>
-      </div>
-      <div class="chat-only">
-        <label for="chatStrength">Reference strength <span id="chatStrengthVal" class="hint-inline"></span></label>
-        <input id="chatStrength" type="range" min="0.1" max="1" step="0.05">
-        <p class="hint">For chat images in “Copy pose” (0.6–1.0) and “Start from image” (0.5–0.7 touch-up, ~0.8 restyle, 0.9+ big changes).</p>
       </div>
 
-      <label>Aspect ratio</label>
+      <label>Aspect ratio <span class="hint-inline">(Auto: edits keep image 1's shape; hogties are landscape)</span></label>
       <div id="sizes" class="chips" role="radiogroup"></div>
 
       <div class="row">
@@ -76,21 +58,6 @@
           <input id="seed" type="number" placeholder="random" min="0">
         </div>
       </div>
-
-      <details class="advanced">
-        <summary>Advanced</summary>
-        <div class="row">
-          <div>
-            <label for="steps">Steps</label>
-            <input id="steps" type="number" min="1" max="80">
-          </div>
-          <div>
-            <label for="cfg">CFG</label>
-            <input id="cfg" type="number" min="1" max="15" step="0.5">
-          </div>
-        </div>
-        <button id="resetAdvanced" class="ghost small">Reset to model defaults</button>
-      </details>
 
       <div class="studio-only">
         <button id="generate" class="primary">Generate</button>
@@ -114,13 +81,12 @@
         <div id="thread" class="thread">
           <div id="chatEmpty" class="chat-empty">
             <p><strong>Paste or drop an image, describe what you want, press Enter.</strong></p>
-            <p>No image? Just describe one. Click <em>Edit</em> under any result to keep working on it.</p>
+            <p>Attached images are image 1, 2, 3: say what to do with them, e.g. “the woman from image 1, hogtied on a bed with a red ballgag” or “in image 1, change her shirt to red”. Click <em>Edit</em> under any result to keep working on it.</p>
           </div>
         </div>
         <form id="composer" class="composer">
           <div id="attachRow" class="attach-row" hidden>
             <div id="attachList" class="refs"></div>
-            <select id="chatRefMode" aria-label="What to do with the attached images"></select>
             <p id="attachHint" class="hint attach-hint" hidden></p>
           </div>
           <div id="libChipsChat" class="lib-chips" hidden></div>

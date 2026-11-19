@@ -35,12 +35,18 @@ const MODELS = {
         g[id] = { class_type: "LoadImage", inputs: { image: name } };
         g["5"].inputs[`images.image_${i + 1}`] = [id, 0];
       });
+      // followImage1: the canvas takes image 1's size and shape (the encoder's latent, as in the official
+      // edit template), for edits of an existing picture; otherwise width/height.
+      if (s.followImage1 && s.refNames?.length) {
+        g["6"] = { class_type: "RepeatLatentBatch", inputs: { samples: ["5", 2], amount: s.count } };
+      }
       return g;
     },
   },
 
   "z-image-turbo": {
     label: "Z-Image Turbo — fast photoreal",
+    hidden: true, // older model, kept as a fallback; the app uses Qwen-Image 2.1
     note: "8 steps, ~5–10 s per image when warm. No negative prompt (turbo models ignore it).",
     needsUpgrade: false,
     supportsNegative: false,
@@ -63,6 +69,7 @@ const MODELS = {
 
   "z-image-base": {
     label: "Z-Image Base — highest detail, negative prompts",
+    hidden: true, // older model, kept as a fallback; the app uses Qwen-Image 2.1
     note: "25 steps, slower but more varied and controllable. Requires the Step 6 upgrade.",
     needsUpgrade: true,
     supportsNegative: true,
@@ -85,6 +92,7 @@ const MODELS = {
 
   "chroma1-hd": {
     label: "Chroma1-HD — unfiltered training, any style",
+    hidden: true, // older model, kept as a fallback; the app uses Qwen-Image 2.1
     note: "26 steps. Strong at illustration, painting and photo styles. Requires the Step 6 upgrade.",
     needsUpgrade: true,
     supportsNegative: true,
@@ -149,43 +157,12 @@ const MODELS = {
 // Reference-image modes.
 const REF_MODES = {
   none: { label: "No reference image" },
-  pose: {
-    label: "Copy pose & composition",
-    note: "Traces the outlines of your image (bodies, poses, props, framing) and builds a new image on them that follows your prompt. Uses Z-Image Turbo. Strength 0.6–1.0 works well.",
-    maxImages: 1, model: "z-image-turbo", needsUpgrade: false, strength: 0.8,
-  },
-  img2img: {
-    label: "Start from this image",
-    note: "Repaints your image with any model. Strength: 0.5–0.7 subtle touch-ups, ~0.8 restyle (e.g. photo → painting), 0.9+ big changes that keep only the rough layout.",
-    maxImages: 1, model: null, needsUpgrade: false, strength: 0.75,
-  },
-  character: {
-    label: "Character / scene reference",
-    note: "Up to 3 images: image 1 = your character (image 2, 3 = e.g. a setting or an outfit). Qwen-Image 2.1 draws the whole scene with the person from image 1, with the bondage add-on on. Write prompts like “The woman from image 1 is lying on a wooden floor, hogtied with red rope, with a red ball gag in her mouth.”",
-    maxImages: 3, model: "qwen-image-21", needsUpgrade: true, strength: null,
-  },
+  // Attached images go to Qwen-Image 2.1 as image 1–3; the prompt says how to use them.
+  refs: { label: "Reference images", maxImages: 3, model: "qwen-image-21", strength: null },
 };
 
-// Adds reference-image nodes to a workflow built by MODELS[...].build().
-// s.refNames are the uploaded filenames, s.refStrength is 0–1.
-function applyReference(g, s) {
-  if (s.refMode === "pose") {
-    g["20"] = { class_type: "LoadImage", inputs: { image: s.refNames[0] } };
-    g["21"] = { class_type: "ImageScale", inputs: { image: ["20", 0], upscale_method: "bicubic", width: s.width, height: s.height, crop: "center" } };
-    g["22"] = { class_type: "Canny", inputs: { image: ["21", 0], low_threshold: 0.1, high_threshold: 0.32 } };
-    g["23"] = { class_type: "ModelPatchLoader", inputs: { name: "Z-Image-Turbo-Fun-Controlnet-Union.safetensors" } };
-    g["24"] = { class_type: "QwenImageDiffsynthControlnet", inputs: {
-      model: ["1", 0], model_patch: ["23", 0], vae: ["3", 0], image: ["22", 0], strength: s.refStrength } };
-    g["4"].inputs.model = ["24", 0];
-  } else if (s.refMode === "img2img") {
-    g["20"] = { class_type: "LoadImage", inputs: { image: s.refNames[0] } };
-    g["21"] = { class_type: "ImageScale", inputs: { image: ["20", 0], upscale_method: "bicubic", width: s.width, height: s.height, crop: "center" } };
-    g["25"] = { class_type: "VAEEncode", inputs: { pixels: ["21", 0], vae: ["3", 0] } };
-    g["26"] = { class_type: "RepeatLatentBatch", inputs: { samples: ["25", 0], amount: s.count } };
-    delete g["7"];
-    g["8"].inputs.latent_image = ["26", 0];
-    g["8"].inputs.denoise = s.refStrength;
-  }
+// Reference images are wired in by the Qwen-Image 2.1 builder itself (refNames); nothing else to add.
+function applyReference(g) {
   return g;
 }
 
@@ -307,38 +284,6 @@ function autoLoras(prompt, modelId) {
   return picked.map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: strengthOf(l) }));
 }
 
-// ---------- Character mode in two steps ----------
-// Qwen Image Edit (character mode) has no bondage LoRAs. So when add-ons apply, character mode first
-// makes the scene with Z-Image + LoRAs, then Qwen Image Edit puts the person from image 1 into it.
-
-// The model that makes the scene: the chosen one if it has LoRAs, otherwise Z-Image Turbo.
-function sceneModelFor(modelId) {
-  return Object.values(LORAS).some((l) => l.models.includes(modelId)) ? modelId : "z-image-turbo";
-}
-
-// The prompt for the scene: references to images ("the woman from image 1") are removed, and extra
-// lines that only describe a reference image (added by the library) are dropped.
-function scenePrompt(prompt) {
-  const [first, ...rest] = String(prompt || "").split(/\n\n/);
-  const ref = /\b(image|picture|photo)\s*\d\b/i;
-  const main = first
-    .replace(/\s*,?\s*\b(from|in|of|shown in|like|as in|based on)\s+(the\s+)?(image|picture|photo)\s*\d\b/gi, "")
-    .replace(/\b(the\s+)?(image|picture|photo)\s*\d\b/gi, "the person")
-    .replace(/\s{2,}/g, " ").trim();
-  return [main, ...rest.filter((l) => !ref.test(l))].join("\n\n");
-}
-
-// The instruction for step 2. Image 1 is the scene, image 2 the person (this order worked best in
-// tests: the edit model changes image 1 and borrows from image 2).
-const SCENE_IMAGE = 1, CHARACTER_IMAGE = 2;
-function characterSwapPrompt() {
-  return `Replace the face and hair of the woman in image ${SCENE_IMAGE} with the face and hair of the woman in image ${CHARACTER_IMAGE}: ` +
-    `her facial features, hair colour, hairstyle, eye colour, freckles and skin tone. Take nothing else from image ${CHARACTER_IMAGE} — ` +
-    `not her clothes, background or expression. If the woman in image ${SCENE_IMAGE} is gagged, the gag stays exactly where it is, ` +
-    `over or in her mouth, with her lips closed around it as in image ${SCENE_IMAGE}. Everything else in image ${SCENE_IMAGE} stays exactly ` +
-    `the same: the pose, the head position, the ropes, her clothes, the setting, the camera angle and the lighting.`;
-}
-
 // [width, height] to use: portrait sizes turn to landscape for a lying-down pose: a "wide" LoRA, or a
 // LoRA whose widePrompt matches the prompt.
 function sizeForLoras(width, height, loras, prompt = "") {
@@ -348,13 +293,19 @@ function sizeForLoras(width, height, loras, prompt = "") {
 
 const CLOTHING_WORDS = /\b(wear(s|ing)?|dressed|clothes|clothed|clothing|outfit|shirt|t-shirt|blouse|top|sweater|jumper|hoodie|cardigan|jacket|coat|dress|skirt|jeans|pants|trousers|leggings|shorts|uniform|suit|pyjamas|pajamas|lingerie|bra|panties|underwear|bikini|swimsuit|nude|naked|topless)\b/i;
 
+// An edit of an attached picture ("In image 1, change her shirt to red", "Make the ropes blue") rather than
+// a new picture. Edits keep image 1's shape and get no clothing sentence (it would change the outfit).
+function isEditPrompt(prompt) {
+  return /^\s*(in|on|for) (image|picture|photo) ?\d\b|^\s*(please\s+)?(change|make|replace|remove|add|turn|swap|give|recolou?r|edit|put|take|tighten|loosen|move|fix)\b/i.test(prompt || "");
+}
+
 // Sentences the picked LoRAs add to the prompt (see promptHints and clothingHint), as one string
-// starting with a space.
-function loraPromptHints(prompt, loras) {
+// starting with a space. Edits get no clothing sentence (see isEditPrompt).
+function loraPromptHints(prompt, loras, isEdit = false) {
   const ls = (loras || []).map((l) => LORAS[l.id]).filter(Boolean);
   const hints = ls.flatMap((l) => (l.promptHints || []).filter(([re]) => re.test(prompt)).map(([, h]) => h));
   const clothing = ls.find((l) => l.clothingHint)?.clothingHint;
-  if (clothing && !CLOTHING_WORDS.test(prompt)) hints.push(clothing);
+  if (clothing && !isEdit && !CLOTHING_WORDS.test(prompt)) hints.push(clothing);
   return hints.length ? " " + hints.join(" ") : "";
 }
 

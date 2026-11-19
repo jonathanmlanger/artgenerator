@@ -249,96 +249,45 @@ let urls = new Map(); // image id -> object URL
 let refs = []; // [{ id, dataUrl, added }]
 
 let view = "chat";
-function refMode() { return $("refMode").value; }
+// Every picture is made with Qwen-Image 2.1 (MAIN_MODEL); attached images are its references, used as the
+// prompt says ("the woman from image 1", "in the pose from image 2", "change her shirt in image 1").
+const MAIN_MODEL = "qwen-image-21";
+function refMode() { return refs.length ? "refs" : "none"; }
 // In chat view the panel's own reference mode is not used, so the model picker is always free.
-function panelMode() { return view === "chat" ? "none" : refMode(); }
-function effectiveModelId() { return REF_MODES[panelMode()]?.model || $("model").value; }
-// Character mode makes its scene with the chosen model (see sceneModelFor), so add-ons follow that one.
-function loraModelId() {
-  const id = effectiveModelId();
-  return id === "qwen-edit" ? sceneModelFor($("model").value) : id;
-}
+function effectiveModelId() { return MAIN_MODEL; }
 
 function initControls() {
-  const modelSel = $("model");
-  for (const [id, m] of Object.entries(MODELS)) {
-    if (m.hidden) continue;
-    const o = document.createElement("option");
-    o.value = id;
-    o.textContent = m.label + (m.needsUpgrade ? " (after upgrade)" : "");
-    modelSel.append(o);
-  }
-  modelSel.value = MODELS[store.get("ui_model")] && !MODELS[store.get("ui_model")].hidden ? store.get("ui_model") : "qwen-image-21";
-  modelSel.addEventListener("change", () => { store.set("ui_model", modelSel.value, true); applyModel(true); });
-
   const sizes = $("sizes");
-  for (const k of Object.keys(SIZES)) {
+  for (const k of ["Auto", ...Object.keys(SIZES)]) {
     const b = document.createElement("button");
     b.type = "button"; b.className = "chip"; b.textContent = k;
     b.setAttribute("role", "radio");
     b.addEventListener("click", () => setSize(k));
     sizes.append(b);
   }
-  setSize(store.get("ui_size") || "1:1");
+  setSize(store.get("ui_size") || "Auto");
 
-  $("negative").value = store.get("ui_negative") ?? DEFAULT_NEGATIVE;
   $("prompt").value = store.get("ui_prompt") || "";
   $("prompt").addEventListener("input", () => { store.set("ui_prompt", $("prompt").value, true); updateLoraPreview(); });
-  $("negative").addEventListener("input", () => store.set("ui_negative", $("negative").value, true));
-  $("resetAdvanced").addEventListener("click", () => applyModel(true));
 
-  const rm = $("refMode");
-  for (const [id, r] of Object.entries(REF_MODES)) {
-    const o = document.createElement("option");
-    o.value = id;
-    o.textContent = r.label + (r.needsUpgrade ? " (after upgrade)" : "");
-    rm.append(o);
-  }
-  rm.value = REF_MODES[store.get("ui_refmode")] ? store.get("ui_refmode") : "none";
-  rm.addEventListener("change", () => { store.set("ui_refmode", rm.value, true); applyRefMode(true); });
-  $("refStrength").addEventListener("input", () => {
-    $("strengthVal").textContent = Number($("refStrength").value).toFixed(2);
-  });
   applyRefMode(false);
 }
 
-function applyRefMode(changed) {
-  const r = REF_MODES[refMode()];
-  const on = refMode() !== "none";
-  $("refWrap").hidden = !on;
-  // In character mode the model still matters: it makes the scene before the character is put in.
-  $("model").disabled = !!REF_MODES[panelMode()].model && REF_MODES[panelMode()].model !== "qwen-edit";
-  if (on) {
-    $("refNote").textContent = r.note;
-    $("strengthWrap").hidden = r.strength == null;
-    if (r.strength != null && (changed || !$("refStrength").dataset.set)) {
-      $("refStrength").value = r.strength;
-      $("refStrength").dataset.set = "1";
-    }
-    $("strengthVal").textContent = Number($("refStrength").value).toFixed(2);
-  }
-  applyModel(changed);
+function applyRefMode() {
+  applyModel();
   renderRefs();
 }
 
+// "Auto": with an attached image, the picture takes image 1's shape (right for edits); a hogtie is landscape
+// (sizeForLoras); otherwise square.
 function setSize(k) {
-  if (!SIZES[k]) k = "1:1";
+  if (k !== "Auto" && !SIZES[k]) k = "Auto";
   size = k;
   store.set("ui_size", k, true);
   for (const b of $("sizes").children) b.setAttribute("aria-checked", String(b.textContent === k));
 }
 
-function applyModel(resetAdvanced) {
-  const forced = REF_MODES[panelMode()]?.model;
-  const m = MODELS[effectiveModelId()];
-  $("modelNote").textContent = forced === "qwen-edit"
-    ? `With bondage add-ons, this mode first makes the scene with ${MODELS[sceneModelFor($("model").value)].label.split(" —")[0]}, then puts the person from image 1 into it with ${m.label.split(" —")[0]}. Requires the Step 6 upgrade.`
-    : forced ? `This mode uses ${m.label.split(" —")[0]}. ${m.needsUpgrade ? "Requires the Step 6 upgrade." : ""}` : m.note;
-  $("negWrap").hidden = !m.supportsNegative;
-  if (resetAdvanced || !$("steps").value) {
-    $("steps").value = m.defaults.steps;
-    $("cfg").value = m.defaults.cfg;
-  }
+function applyModel() {
   renderLoras();
 }
 
@@ -363,7 +312,7 @@ function activeLoras(modelId, prompt) {
     .map(([id, l]) => ({ id, label: l.label, file: loraFile(l, modelId), strength: loraSettings(id, st).strength }));
 }
 function renderLoras() {
-  const modelId = loraModelId();
+  const modelId = effectiveModelId();
   const list = $("loraList");
   list.textContent = "";
   const usable = Object.entries(LORAS).filter(([, l]) => l.models.includes(modelId));
@@ -428,8 +377,8 @@ function updateLoraPreview() {
   if (!el) return;
   if (!loraAuto()) { el.textContent = "Off: tick the add-ons to use below."; return; }
   const prompt = (view === "chat" ? $("chatInput") : $("prompt")).value;
-  const picked = autoLoras(scenePrompt(prompt), loraModelId());
-  el.textContent = "Picks add-ons from your prompt (e.g. “hogtied”, “ballgag”, “huge ballgag”, “cleave gag”, “tied to a chair”); rope bound when none match. " +
+  const picked = autoLoras(prompt, effectiveModelId());
+  el.textContent = "On: the bondage add-on is used and your poses and gags (e.g. “hogtied”, “ballgag”, “tied to a chair”, “cleave gag”) are spelled out for it behind the scenes. " +
     (picked.length ? "Will use: " + picked.map((l) => `${l.label} ${l.strength}`).join(", ") + "." : "");
 }
 
@@ -441,64 +390,52 @@ function setStatus(msg, isError = false) {
 // ---------- Generation ----------
 // Builds the job settings from the left panel plus a prompt and reference images.
 // Throws an Error with a user-facing message if something is missing.
-function prepareSettings(prompt, refList, mode = refMode(), strengthValue = $("refStrength").value) {
-  const rmode = REF_MODES[mode];
-  const modelId = rmode.model || $("model").value;
+function prepareSettings(prompt, refList, mode = refMode()) {
+  const modelId = MAIN_MODEL;
   const m = MODELS[modelId];
-  // If this mode uses a different model than the one the panel shows, use that model's own steps/CFG.
-  const own = modelId === effectiveModelId();
   if (!prompt) throw new Error("Write a prompt first.");
-  const useRefs = mode === "none" ? [] : refList.slice(0, rmode.maxImages);
-  if (mode !== "none" && !useRefs.length) throw new Error("Add a reference image, or set Reference image to “No reference image”.");
+  const useRefs = mode === "none" ? [] : refList.slice(0, REF_MODES.refs.maxImages);
   const flagged = checkPrompt(prompt);
   if (flagged) throw new Error(`This studio only creates images of adults. Remove "${flagged}" from the prompt.`);
 
-  const [width, height] = SIZES[size];
+  const loras = activeLoras(modelId, prompt);
+  // A lying-down pose (hogtie) comes out sitting or kneeling in a tall frame, so it uses landscape.
+  const wide = sizeForLoras(2, 3, loras, prompt)[0] === 3;
+  let [width, height] = SIZES[size] || SIZES["1:1"];
+  let followImage1 = false, turnedWide = false;
+  const edit = useRefs.length > 0 && isEditPrompt(prompt);
+  if (size === "Auto") {
+    if (edit) followImage1 = true; // keeps image 1's shape, so the edit lines up
+    else if (wide) [width, height] = SIZES["3:2"];
+  } else if (wide && height > width) {
+    [width, height] = [height, width];
+    turnedWide = true;
+  }
   const seedInput = $("seed").value.trim();
   const settings = {
     model: modelId,
     prompt,
-    negative: m.supportsNegative ? $("negative").value.trim() : "",
-    width, height,
+    negative: "",
+    width, height, followImage1, turnedWide, sizeChoice: size,
     count: Number($("count").value),
-    steps: own ? clampInt($("steps").value, 1, 80, m.defaults.steps) : m.defaults.steps,
-    cfg: own ? clampNum($("cfg").value, 1, 15, m.defaults.cfg) : m.defaults.cfg,
+    steps: m.defaults.steps,
+    cfg: m.defaults.cfg,
     seed: seedInput ? Number(seedInput) : Math.floor(Math.random() * 2 ** 48),
-    refMode: mode,
+    refMode: useRefs.length ? "refs" : "none",
     refCount: useRefs.length,
-    refStrength: rmode.strength == null ? null : clampNum(strengthValue, 0.05, 1, rmode.strength),
+    refStrength: null,
     refNames: useRefs.map((r) => `studio_ref_${r.id}.jpg`),
-    loras: activeLoras(modelId, prompt),
+    loras,
     loraAuto: loraAuto(),
   };
-  // Character mode with add-ons runs in two steps (see executeCharacterScene): the scene, then the person.
-  if (modelId === "qwen-edit") {
-    const sceneModel = sceneModelFor($("model").value);
-    const sp = scenePrompt(prompt);
-    const loras = activeLoras(sceneModel, sp);
-    if (loras.length) {
-      const sm = MODELS[sceneModel];
-      settings.scene = { model: sceneModel, prompt: sp, steps: sm.defaults.steps, cfg: sm.defaults.cfg,
-        negative: sm.supportsNegative ? $("negative").value.trim() : "" };
-      settings.loras = loras;
-      // Step 2 uses the first reference image as the person.
-      useRefs.splice(1);
-      settings.refCount = 1;
-      settings.refNames = settings.refNames.slice(0, 1);
-    }
-  }
-  // A lying-down pose (hogtie) comes out head-down in a tall frame, so use landscape for it.
-  const [w, h] = sizeForLoras(settings.width, settings.height, settings.loras, prompt);
-  if (w !== settings.width) { settings.width = w; settings.height = h; settings.turnedWide = true; }
   // Automatic mode also spells out the pose and gag the way the LoRA was trained (kept apart from the
   // prompt, so reusing an image's settings doesn't repeat it).
-  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras);
+  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras, edit);
   return { settings, useRefs };
 }
 
 // Runs a generation and saves the results to the gallery. Returns { items, summary }.
 async function executeGeneration(settings, useRefs, onStatus) {
-  if (settings.scene) return executeCharacterScene(settings, useRefs, onStatus);
   const started = Date.now();
   onStatus(useRefs.length ? "Uploading reference images and sending job…" : "Sending job to RunPod…");
   const built = { ...settings, prompt: settings.prompt + (settings.promptExtra || "") };
@@ -526,53 +463,7 @@ async function executeGeneration(settings, useRefs, onStatus) {
   return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
 }
 
-const waitText = (secs) => `Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take 1–3 minutes while the worker boots and loads the model. Tip: press “Wake up GPU” when you sit down.)`;
-
-// Character mode with bondage add-ons. Step 1: Z-Image + LoRAs makes the scene from the prompt.
-// Step 2: Qwen Image Edit replaces the person in each scene image with the person from image 1.
-async function executeCharacterScene(settings, useRefs, onStatus) {
-  const started = Date.now();
-  const sc = settings.scene;
-  const sceneSettings = { ...settings, ...sc, refMode: "none", refCount: 0, refNames: [] };
-  onStatus("Step 1 of 2: making the scene…");
-  const workflow = applyLoras(MODELS[sc.model].build(sceneSettings), settings.loras);
-  const r1 = await runJob({ workflow }, (st, secs) => onStatus(st === "IN_QUEUE" ? `Step 1 of 2: ${waitText(secs)}` : `Step 1 of 2: making the scene… ${secs}s`),
-    true, endpointFor(sc.model));
-  if (r1.status !== "COMPLETED") throw new Error(describeFailure(r1));
-  const scenes = extractImages(r1.output);
-  if (!scenes.length) throw new Error("The scene finished but returned no images. " + JSON.stringify(r1.output).slice(0, 300));
-
-  const items = [];
-  let gpu = r1.executionTime || 0;
-  for (const [i, b64] of scenes.entries()) {
-    const step = scenes.length > 1 ? `Step 2 of 2 (image ${i + 1} of ${scenes.length})` : "Step 2 of 2";
-    onStatus(`${step}: putting your character into the scene…`);
-    // Image 1 = the scene, image 2 = the person (see characterSwapPrompt).
-    const sceneName = `studio_scene_${Date.now()}_${i}.png`;
-    const editSettings = { ...settings, prompt: characterSwapPrompt(), count: 1, refNames: [sceneName, settings.refNames[0]] };
-    const input = {
-      workflow: MODELS["qwen-edit"].build(editSettings),
-      images: [
-        { name: sceneName, image: `data:image/png;base64,${b64}` },
-        { name: settings.refNames[0], image: useRefs[0].dataUrl },
-      ],
-    };
-    const r2 = await runJob(input, (st, secs) => onStatus(st === "IN_QUEUE" ? `${step}: ${waitText(secs)}` : `${step}: putting your character into the scene… ${secs}s`),
-      true, endpointFor("qwen-edit"));
-    if (r2.status !== "COMPLETED") throw new Error(describeFailure(r2));
-    const out = extractImages(r2.output)[0];
-    if (!out) throw new Error("The character step finished but returned no image. " + JSON.stringify(r2.output).slice(0, 300));
-    gpu += r2.executionTime || 0;
-    const item = { id: `${Date.now()}-${i}`, created: Date.now(), blob: b64ToBlob(out), settings: { ...settings, index: i } };
-    await db.add(item);
-    items.push(item);
-  }
-  const secs = ((Date.now() - started) / 1000).toFixed(0);
-  const exec = gpu ? ` (GPU time ${(gpu / 1000).toFixed(1)}s)` : "";
-  const loraText = ` Scene: ${MODELS[sc.model].label.split(" —")[0]} with ${settings.loras.map((l) => `${l.label} ${l.strength}`).join(", ")}.`;
-  const wideText = settings.turnedWide ? " Made in landscape because the hogtie pose comes out wrong in a tall frame." : "";
-  return { items, summary: `Done in ${secs}s${exec}. Seed ${settings.seed}.${loraText}${wideText}` };
-}
+const waitText = (secs) => `Waiting for a GPU worker… ${secs}s\n(The first job after a while idle can take about 3 minutes while the worker starts up and loads the model. Tip: press “Wake up GPU” when you sit down.)`;
 
 async function generate() {
   if (currentJob || busy) return;
@@ -621,11 +512,8 @@ async function wake() {
   btn.disabled = true;
   btn.classList.remove("ready");
   try {
-    // Warm the GPU and model the current settings will use (character reference runs on the edit endpoint).
-    // Character mode with add-ons also makes a scene on the main endpoint, so warm that one too.
-    const modelId = effectiveModelId();
-    const sceneModel = sceneModelFor($("model").value);
-    const ids = modelId === "qwen-edit" && activeLoras(sceneModel, "").length ? [modelId, sceneModel] : [modelId];
+    // Warm the GPU and the model on the endpoint that runs it.
+    const ids = [effectiveModelId()];
     const rs = await Promise.all(ids.map((id) => runJob({ workflow: warmupWorkflow(id) }, (st, secs) => {
       btn.textContent = st === "IN_QUEUE" ? `Starting GPU… ${secs}s` : "Loading model…";
     }, false, endpointFor(id))));
@@ -723,7 +611,7 @@ function openViewer(item) {
   $("viewerImg").src = urls.get(item.id);
   $("viewerImg").alt = s.prompt.slice(0, 120);
   $("viewerMeta").textContent =
-    `${MODELS[s.model]?.label || s.model} · ${s.width}×${s.height} · seed ${s.seed}${s.index ? ` (+${s.index} in batch)` : ""} · ${s.steps} steps · CFG ${s.cfg}${s.refMode && s.refMode !== "none" ? ` · ${REF_MODES[s.refMode].label} (${s.refCount} image${s.refCount > 1 ? "s" : ""}${s.refStrength != null ? `, strength ${s.refStrength}` : ""})` : ""}\n${s.prompt}`;
+    `${MODELS[s.model]?.label || s.model} · ${s.width}×${s.height} · seed ${s.seed}${s.index ? ` (+${s.index} in batch)` : ""} · ${s.steps} steps · CFG ${s.cfg}${s.refMode && s.refMode !== "none" ? ` · ${REF_MODES[s.refMode]?.label || "Reference images"} (${s.refCount} image${s.refCount > 1 ? "s" : ""}${s.refStrength != null ? `, strength ${s.refStrength}` : ""})` : ""}\n${s.prompt}`;
   $("vDownload").href = urls.get(item.id);
   $("vDownload").download = `studio-${s.seed}-${item.id}.png`;
   $("viewer").showModal();
@@ -731,19 +619,13 @@ function openViewer(item) {
 
 function reuse(item) {
   const s = item.settings;
-  const panelModel = s.scene?.model || s.model;
-  if (MODELS[panelModel] && !MODELS[panelModel].hidden) { $("model").value = panelModel; store.set("ui_model", panelModel, true); }
-  $("refMode").value = s.refMode || "none"; store.set("ui_refmode", $("refMode").value, true);
-  applyRefMode(false);
-  if (s.refStrength != null) { $("refStrength").value = s.refStrength; $("strengthVal").textContent = Number(s.refStrength).toFixed(2); }
+  // Images made with an older model reuse their prompt, seed and size with Qwen-Image 2.1.
+  const panelModel = MAIN_MODEL;
   $("prompt").value = s.prompt; store.set("ui_prompt", s.prompt, true);
   if (view === "chat") { $("chatInput").value = s.prompt; $("chatInput").dispatchEvent(new Event("input")); }
-  if (s.negative) { $("negative").value = s.negative; store.set("ui_negative", s.negative, true); }
-  const sizeKey = Object.keys(SIZES).find((k) => SIZES[k][0] === s.width && SIZES[k][1] === s.height);
+  const sizeKey = s.sizeChoice || Object.keys(SIZES).find((k) => SIZES[k][0] === s.width && SIZES[k][1] === s.height);
   if (sizeKey) setSize(sizeKey);
   $("seed").value = s.seed;
-  $("steps").value = s.steps;
-  $("cfg").value = s.cfg;
   $("count").value = "1";
   if (s.loraAuto) {
     const st = loraState();
@@ -875,7 +757,7 @@ function renderRefs() {
       for (const r of refs) await refDb.add(r);
       renderRefs();
     },
-    () => { $("refMode").value = "character"; store.set("ui_refmode", "character", true); applyRefMode(true); });
+    () => {});
   $("refAdd").hidden = refs.length >= MAX_REFS;
 }
 
@@ -896,7 +778,6 @@ function initRefs() {
       if (files.length) { e.preventDefault(); addChatAttachments(files); }
       return;
     }
-    if (refMode() === "none") return;
     const files = [...(e.clipboardData?.files || [])];
     if (files.length) { e.preventDefault(); addRefs(files); }
   });
@@ -905,14 +786,9 @@ function initRefs() {
 
 async function useAsReference(item) {
   if (view === "chat") return editInChat(item);
-  if (refMode() === "none") {
-    $("refMode").value = "pose";
-    store.set("ui_refmode", "pose", true);
-    applyRefMode(true);
-  }
   if (!(await askConsent())) return;
   await addRefs([new File([item.blob], "gallery.png", { type: "image/png" })]);
-  setStatus("Added to reference images. Pick the reference mode you want above.");
+  setStatus(`Added as image ${Math.min(refs.length, MAX_REFS)}. Say in the prompt what to do with it, e.g. “In image 1, change her shirt to red” or “the woman from image 1 …”.`);
 }
 
 // ---------- Chat ----------
@@ -936,23 +812,6 @@ function setView(v) {
 }
 
 function initChat() {
-  const cm = $("chatRefMode");
-  for (const [id, r] of Object.entries(REF_MODES)) {
-    if (id === "none") continue;
-    const o = document.createElement("option");
-    o.value = id;
-    o.textContent = r.label + (r.needsUpgrade ? " (after upgrade)" : "");
-    cm.append(o);
-  }
-  cm.value = REF_MODES[store.get("ui_chatmode")] && store.get("ui_chatmode") !== "none" ? store.get("ui_chatmode") : "pose";
-  cm.addEventListener("change", () => { store.set("ui_chatmode", cm.value, true); renderAttachments(); });
-
-  const cs = $("chatStrength");
-  cs.value = store.get("ui_chatstrength") || "0.75";
-  const showStrength = () => { $("chatStrengthVal").textContent = Number(cs.value).toFixed(2); };
-  cs.addEventListener("input", () => { store.set("ui_chatstrength", cs.value, true); showStrength(); });
-  showStrength();
-
   $("tabChat").addEventListener("click", () => setView("chat"));
   $("tabGallery").addEventListener("click", () => setView("studio"));
   $("tabLibrary").addEventListener("click", () => setView("library"));
@@ -999,10 +858,10 @@ async function addChatAttachments(files) {
 
 function renderAttachments() {
   $("attachRow").hidden = !chatAttach.length;
-  drawThumbs($("attachList"), chatAttach, $("chatRefMode").value, $("attachHint"),
+  drawThumbs($("attachList"), chatAttach, "refs", $("attachHint"),
     (a) => { chatAttach = chatAttach.filter((y) => y !== a); renderAttachments(); },
     (list) => { chatAttach = list; renderAttachments(); },
-    () => { $("chatRefMode").value = "character"; store.set("ui_chatmode", "character", true); renderAttachments(); });
+    () => {});
 }
 function flashAttachHint(msg) {
   const h = $("attachHint");
@@ -1017,11 +876,11 @@ async function sendChat(retryOf) {
   // A retry resends exactly what was sent before; a new message gets library terms applied.
   const lib = retryOf
     ? { prompt: retryOf.prompt || retryOf.text, atts: retryOf.attachments.map((dataUrl, i) => ({ id: `${retryOf.id}${i}`, dataUrl })), mode: retryOf.mode, used: retryOf.library || [] }
-    : applyLibrary(text, chatAttach.slice(), chatAttach.length ? $("chatRefMode").value : "none");
+    : applyLibrary(text, chatAttach.slice(), chatAttach.length ? "refs" : "none");
   const mode = lib.mode;
 
   let prep;
-  try { prep = prepareSettings(lib.prompt, lib.atts, mode, $("chatStrength").value); }
+  try { prep = prepareSettings(lib.prompt, lib.atts, mode); }
   catch (e) {
     messages.push({ id: `e${Date.now()}`, created: Date.now(), role: "assistant", error: e.message, local: true });
     return renderThread();
@@ -1052,7 +911,7 @@ async function sendChat(retryOf) {
       if (el) el.textContent = m;
     });
     reply.imageIds = items.map((i) => i.id);
-    reply.summary = `${MODELS[prep.settings.model].label.split(" —")[0]}${mode !== "none" ? ` · ${REF_MODES[mode].label}` : ""} · ${summary}`;
+    reply.summary = `${MODELS[prep.settings.model].label.split(" —")[0]}${mode !== "none" ? ` · ${REF_MODES[mode]?.label || "Reference images"}` : ""} · ${summary}`;
   } catch (e) {
     reply.error = e.message || String(e);
   } finally {
@@ -1091,7 +950,7 @@ async function renderThread() {
       b.textContent = msg.text;
       el.append(b);
       const notes = [];
-      if (msg.mode && msg.mode !== "none") notes.push(REF_MODES[msg.mode].label);
+      if (msg.mode && msg.mode !== "none") notes.push(REF_MODES[msg.mode]?.label || "Reference images");
       if (msg.library?.length) notes.push("Library: " + msg.library.join(", "));
       if (notes.length) el.append(meta(notes.join(" · ")));
     } else if (msg.error) {
@@ -1212,7 +1071,7 @@ function applyLibrary(text, atts, mode) {
     if (ch.on === false) continue;
     let line = e.description?.trim() ? `${e.name}: ${e.description.trim()}` : "";
     if (ch.image && e.images?.length && out.length < 3) {
-      mode = "character";
+      mode = "refs";
       out.push({ id: `lib${e.id}`, dataUrl: e.images[0] });
       const n = out.length;
       line += `${line ? " " : ""}The ${e.name} must look like the one shown in image ${n}. Use image ${n} only as a reference for the ${e.name}, not for the people or the setting.`;
