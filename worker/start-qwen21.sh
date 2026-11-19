@@ -34,14 +34,17 @@ log "---- start"
 # Several workers can start at once (e.g. while RunPod rolls out a settings change) and they share this
 # volume. Only one may download and fetch at a time, or they overwrite each other's partial files.
 LOCK="$VOL/cache/start-qwen21.lock"
-for i in $(seq 1 180); do
+for i in $(seq 1 45); do
   if mkdir "$LOCK" 2>/dev/null; then
     echo "$WORKER" > "$LOCK/owner"
     trap 'rm -rf "$LOCK"' EXIT
     break
   fi
   age=$(( $(date +%s) - $(stat -c %Y "$LOCK" 2>/dev/null || date +%s) ))
-  if [ "$age" -gt 3600 ]; then log "removing a stale setup lock (${age}s old)"; rm -rf "$LOCK"; continue; fi
+  # Our own lock means RunPod stopped this worker mid-setup earlier; one older than 15 minutes is stale too.
+  if [ "$(cat "$LOCK/owner" 2>/dev/null)" = "$WORKER" ] || [ "$age" -gt 900 ]; then
+    log "taking over a leftover setup lock (${age}s old)"; rm -rf "$LOCK"; continue
+  fi
   [ "$i" = 1 ] && log "worker $(cat "$LOCK/owner" 2>/dev/null) is setting up; waiting for it"
   sleep 20
 done
@@ -63,6 +66,9 @@ for e in "${FILES[@]}"; do
   [ "$have" = "$bytes" ] || need=$((need + bytes - $(stat -c %s "$f.part" 2>/dev/null || echo 0)))
 done
 free=$(df -B1 --output=avail "$VOL" | tail -1)
+# RunPod stops a worker that isn't ready after about 8 minutes, so downloads get at most DOWNLOAD_SECONDS
+# per start; partial files resume on the next start.
+DEADLINE=$(( $(date +%s) + ${DOWNLOAD_SECONDS:-300} ))
 if [ "$need" -gt 0 ] && [ "$free" -lt $((need + 2000000000)) ]; then
   log "NOT downloading Qwen-Image 2.1: needs $((need / 1000000000)) GB, only $((free / 1000000000)) GB free. Enlarge the network volume."
 else
@@ -73,8 +79,10 @@ else
     mkdir -p "$(dirname "$f")"
     # A partial file larger than the real one is damaged (e.g. by writes while the volume was full).
     if [ "$(stat -c %s "$f.part" 2>/dev/null || echo 0)" -gt "$bytes" ]; then log "removing damaged partial $path"; rm -f "$f.part"; fi
-    log "downloading $path ($((bytes / 1000000)) MB)"
-    err=$(wget -nv -c --tries=5 --waitretry=5 -O "$f.part" "$HF/$path" 2>&1 | tail -3)
+    left=$(( DEADLINE - $(date +%s) ))
+    if [ "$left" -lt 15 ]; then log "no time left this start for $path; it downloads on the next start"; continue; fi
+    log "downloading $path ($((bytes / 1000000)) MB, up to ${left}s this start)"
+    err=$(timeout "$left" wget -nv -c --tries=5 --waitretry=5 -O "$f.part" "$HF/$path" 2>&1 | tail -3)
     got=$(stat -c %s "$f.part" 2>/dev/null || echo 0)
     if [ "$got" != "$bytes" ]; then
       log "ERROR: $path is $got of $bytes bytes after the download; it resumes on the next start. wget: $err"
