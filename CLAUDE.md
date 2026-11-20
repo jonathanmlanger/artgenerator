@@ -30,6 +30,7 @@ Use Playwright against a local `python3 -m http.server` for UI changes (desktop 
 ## Working with the owner
 
 - Plain language, no jargon in the app or in replies; the owner prefers a clean, chat-first screen with few settings.
+- Keep on-screen text neutral (no bondage terms in labels, hints or messages) so the app can be shown to others; such terms belong only in the code (keyword matching, prompt hints).
 - Show test pictures when reporting image changes.
 - The owner is in US Central time. A weekly "Weekly image model check" scheduled task (Tuesdays 9:40 AM Central) reports new models and add-ons; it never changes anything.
 - Ideas on hold: a cheaper 30 GB volume (~$2/month instead of ~$7), the QMA camera-angle add-on for "from above"-style edits, and a "more variety" option using the full (non-Turbo) model.

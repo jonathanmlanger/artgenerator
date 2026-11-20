@@ -8,7 +8,7 @@ const MODELS = {
   // Reference images (refNames) are optional; the canvas size always comes from width/height.
   "qwen-image-21": {
     label: "Qwen-Image 2.1 — best quality (recommended)",
-    note: "8 steps, coherent bodies and faces. With the bondage megapack add-on it draws hogties, chair ties and gags well. Also used for character photos (Character / scene reference). Describe the pose, ropes and gag in plain sentences.",
+    note: "8 steps, coherent bodies and faces. Uses attached pictures as image 1–3.",
     needsUpgrade: false, // set up by worker/start-qwen21.sh, not the README's Step 6
     endpoint: "edit", // its files and the newer ComfyUI are set up on the edit endpoint (worker/start-qwen21.sh)
     supportsNegative: false,
@@ -211,12 +211,12 @@ const LORAS = {
     forceKeywords: /\b(large|big|huge|giant|oversized)\b[\w ,-]{0,20}?\bball[- ]?gag/i,
   },
   "bondage-megapack": {
-    label: "Bondage & gags megapack",
+    label: "Pose & detail pack",
     file: "bondage_megapack_qwen21.safetensors",
     models: ["qwen-image-21"],
     strength: 1.0,
     fullStrength: true, // its author recommends 1.0 (1.2 if bodies warp); automatic mode doesn't lower it
-    note: "Rope ties (hogtie, chair tie, elbows, full body), tape, and ball, cleave, tape, over-the-mouth, ring and panel gags. Write plain sentences, e.g. “Her ankles are tied to her bound wrists” or “a red ball gag in her mouth fastened with black leather straps”.",
+    note: "Recommended for this model. Describe the pose and props in plain sentences.",
     source: "https://civitai.com/models/2994404",
     keywords: /\b(hog[- ]?tie[ds]?|ball[- ]?gag(s|ged)?|gag(s|ged)?|rope[sd]?|tied|bound|bondage|restrained|tape[d]?|cuff(s|ed)?|shibari)\b/i,
     // Short prompts ("hogtied with a ballgag") often miss the pose; the LoRA was trained on these

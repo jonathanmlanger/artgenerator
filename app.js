@@ -457,7 +457,7 @@ async function executeGeneration(settings, useRefs, onStatus) {
   }
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   // Kept short; the full details (model, add-ons, size) are in the gallery's picture view.
-  const wideText = settings.turnedWide ? " · made wide for the hogtie" : "";
+  const wideText = settings.turnedWide ? " · made wide for this pose" : "";
   return { items, summary: `Done in ${secs} s · picture no. ${settings.seed}${wideText}` };
 }
 
