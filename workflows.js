@@ -248,10 +248,10 @@ const LORAS = {
     // while the key part (e.g. ankles tied to wrists) stays.
     promptHints: [
       [/\bhog[- ]?(tie[ds]?|tying)\b/i, [
-        // Kept neutral about tightness: TIE_STYLES adds strict or loose. ("On her side" was dropped: the
-        // add-on always draws her on her stomach.)
+        // Kept neutral about tightness: TIE_STYLES adds strict or loose. Dropped after testing: "on her side"
+        // (always drawn on her stomach) and "face down ... elbows ... ankles crossed" (kneeling or standing
+        // in 4 of 6; the wording below held 6 of 6 with the same seeds).
         "She is lying on her stomach, hogtied: her wrists are tied behind her back and joined to her ankles, her knees bent and her feet raised behind her.",
-        "She is hogtied face down: her arms are bound behind her back at the wrists and elbows, her ankles are crossed and tied, and a rope joins her ankles to her wrists, pulling her feet up.",
         "She is lying on her stomach, hogtied with extra rope around her thighs and knees; her bound wrists are tied to her bound ankles behind her and her feet point upward.",
       ]],
       [/\b(tied to a chair|chair[- ]?tie[ds]?|bound to a chair)\b/i, [
@@ -356,14 +356,14 @@ function isEditPrompt(prompt) {
 // Camera angle and place, picked per picture when the prompt names neither, so pictures don't all share
 // the model's favourite framing.
 // Tested (2026-11-21): "Medium shot from the front at eye level" made her stand or kneel in 5 of 6 pictures,
-// so every angle here names floor level or looks down on her lying down.
+// so every angle here names floor level or looks down on her lying down. "Seen from behind her feet" was
+// dropped too (legs straightened in 3 of 5); that view works with a sketch as a reference instead.
 const CAMERA_HINTS = [
   "Photographed from the side at floor level.",
   "Three-quarter view from slightly above.",
   "Seen from above, looking down at her as she lies on the floor.",
   "Full-body shot from a low angle close to the floor.",
   "Close-up from the front at floor level: her face in the foreground and her bound feet raised behind her.",
-  "Seen from behind her feet at floor level: her bound ankles and soles in the foreground, her body stretching away from the camera.",
   "Wide shot from floor level that shows the room around her as she lies on the floor.",
 ];
 const CAMERA_WORDS = /\b(from (above|below|behind|the side|the front|the back)|side view|close-?up|wide shot|medium shot|low angle|high angle|overhead|top-down|three-quarter|profile|full[- ]body|camera|angle|view|portrait|framing)\b/i;
