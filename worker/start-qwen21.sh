@@ -57,6 +57,7 @@ HF="https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 # text_encoders/), so the files go there.
 FILES=(
   "unet/qwen_image_2.1_turbo_int8_convrot.safetensors|7256787829|8144a0182964aa8403ad6dbc011db837304167d235161b9aabaa8532e967314c"
+  "unet/qwen_image_2.1_int8_convrot.safetensors|7256783064|cb74113cb03faecd79611b01fd7fd642f0aa60d6f0b95086abee214d75eaa57d"
   "clip/qwen3vl_8b_int8_convrot.safetensors|9350798360|8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f"
   "vae/qwen_image_2.1_vae_bf16.safetensors|675509688|bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
 )
@@ -109,6 +110,12 @@ else
 fi
 
 # ---------- 3. Upgrade ComfyUI ----------
+# The custom worker image (worker/Dockerfile) already has it; then there is nothing to do.
+if python3 -c 'import sys; sys.path.insert(0, "/comfyui"); import comfyui_version; sys.exit(0 if comfyui_version.__version__ == sys.argv[1].lstrip("v") else 1)' "$COMFY_VERSION" 2>/dev/null; then
+  log "ComfyUI is already $COMFY_VERSION"; rm -rf "$LOCK"; trap - EXIT
+  log "volume space after: $(df -h "$VOL" | awk 'NR==2 {print $4 " free of " $2}')"
+  exec /start.sh
+fi
 SRC="$VOL/cache/comfyui-$COMFY_VERSION"
 if [ ! -f "$SRC/main.py" ]; then
   log "fetching ComfyUI $COMFY_VERSION"
