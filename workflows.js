@@ -248,9 +248,10 @@ const LORAS = {
     // while the key part (e.g. ankles tied to wrists) stays.
     promptHints: [
       [/\bhog[- ]?(tie[ds]?|tying)\b/i, [
-        "She is lying on her stomach in a tight hogtie: her wrists are tied behind her back and pulled to her ankles, her knees bent and her feet raised behind her.",
-        "She is hogtied face down: her arms are bound behind her back at the wrists and elbows, her ankles are crossed and tied, and a short rope joins her ankles to her wrists, pulling her feet up.",
-        "She is lying on her side in a tight hogtie: her wrists are tied behind her back, her ankles are tied together, and her knees are bent sharply so her bound ankles are pulled up behind her and tied to her bound wrists with a short rope.",
+        // Kept neutral about tightness: TIE_STYLES adds strict or loose. ("On her side" was dropped: the
+        // add-on always draws her on her stomach.)
+        "She is lying on her stomach, hogtied: her wrists are tied behind her back and joined to her ankles, her knees bent and her feet raised behind her.",
+        "She is hogtied face down: her arms are bound behind her back at the wrists and elbows, her ankles are crossed and tied, and a rope joins her ankles to her wrists, pulling her feet up.",
         "She is lying on her stomach, hogtied with extra rope around her thighs and knees; her bound wrists are tied to her bound ankles behind her and her feet point upward.",
       ]],
       [/\b(tied to a chair|chair[- ]?tie[ds]?|bound to a chair)\b/i, [
@@ -394,7 +395,7 @@ function pickFor(list, seed, salt) {
 const POSE_DETAIL_WORDS = /\b(wrists?|ankles?|elbows?|knees?|thighs?|arms?|legs?|feet|toes?|on her (side|stomach|back|front|belly|knees)|face[- ]?down|chest|waist|harness|frog[- ]?tie[ds]?|box[- ]?tie|kneeling|crossed)\b/i;
 const GAG_DETAIL_WORDS = /\b(strap(s|ped)?|buckle[ds]?|between her (lips|teeth)|behind her head|harness)\b/i;
 const LIGHT_WORDS = /\b(light(ing|s)?|lit|sun(light|lit|set)?|dark|dim|shadows?|candle(s|light)?|lamp|night|morning|evening|golden hour|moody|bright)\b/i;
-const LOOK_WORDS = /\b(hair|blonde?|brunette|redhead|ginger|curly|ponytail|braids?|bun|freckles?|tall|petite|slim|curvy|athletic|plus[- ]size|her (twenties|thirties|forties|fifties)|\d\d[- ]year[- ]old|image \d|picture \d|photo \d)\b/i;
+const LOOK_WORDS = /\b(hair|blonde?|brunette|redhead|ginger|curly|ponytail|braids?|bun|freckles?|her (twenties|thirties|forties|fifties)|\d\d[- ]year[- ]old|image \d|picture \d|photo \d)\b/i;
 const FOOT_WORDS = /\b(barefoot|bare feet|shoes?|heels?|boots?|sneakers?|trainers?|socks?|stockings?|tights|feet)\b/i;
 const ROPE_COLOUR_WORDS = /\b(red|black|white|blue|pink|green|purple|yellow|jute|hemp|cotton|nylon|silk|tape|cuffs?|chains?)\b[^.]*\b(rope|ropes|cord|tied|bound)|\b(rope|ropes|cord)\b[^.]*\b(red|black|white|blue|pink|green|purple|jute|hemp|cotton|nylon)\b/i;
 const LIGHT_HINTS = [
@@ -412,13 +413,42 @@ const LOOK_HINTS = [
   "She is a woman in her forties with short brown hair.",
   "She is a woman in her late twenties with a long brown braid.",
   "She is a woman in her thirties with wavy auburn hair in a ponytail.",
-  "She is a slim woman in her twenties with straight black hair in a bun.",
+  "She is a woman in her twenties with straight black hair in a bun.",
   "She is a woman in her thirties with honey-blonde hair, slightly messy.",
 ];
 const FOOT_HINTS = ["She is barefoot.", "She is wearing black high heels.", "She is wearing white socks.",
   "She is wearing ankle boots.", "She is wearing sneakers.", "She is wearing sheer tights and no shoes."];
 const ROPE_HINTS = ["The rope is natural tan jute.", "The rope is red.", "The rope is black.",
   "The rope is white cotton.", "The rope is natural tan jute."];
+
+// Body type, picked when the prompt and reference pictures say nothing about it, and placed first (tested
+// earlier: body wording at the start is followed best). Height and feet differ too, so not every woman
+// comes out the same size. heavy: soft body, so a strict tie gets a sentence about the rope pressing in.
+const BODY_WORDS = /\b(petite|short|tall|slim|slender|skinny|thin|athletic|toned|muscular|fit|curvy|chubby|plump|heavy|heavier|heavyset|fat|plus[- ]size|full[- ]figured|thick|bbw|voluptuous|busty|stocky|lanky|small[- ]framed|body|build|figure)\b/i;
+const BODY_HINTS = [
+  { t: "She is petite and short, with a small frame and small, narrow feet." },
+  { t: "She is slim and of average height, with slender arms and legs." },
+  { t: "She is athletic and toned, with strong legs and defined arms." },
+  { t: "She has an average, soft build and medium height." },
+  { t: "She is curvy, with full hips, a full bust and thick thighs.", heavy: true },
+  { t: "She is a heavier, full-figured woman with a round belly, wide hips, soft arms and thick thighs.", heavy: true },
+  { t: "She is tall and long-limbed, with long legs and long, slender feet." },
+];
+// How tight the hogtie is: the prompt's own word wins ("strict", "tight", "loose"); otherwise picked per
+// picture (strict and standard twice as often as loose). Each style has its own closing reminder.
+const TIGHT_WORDS = /\b(strict(ly)?|tight(ly|er)?|severe(ly)?|compact(ly)?|cinched)\b/i;
+const LOOSE_WORDS = /\b(loose(ly|r)?|relaxed|slack)\b/i;
+const HOGTIE_WORDS = /\bhog[- ]?(tie[ds]?|tying)\b/i;
+const TIE_STYLES = {
+  strict: { hint: "It is a strict, tight hogtie: her wrists and ankles are cinched together with almost no gap, her back arched and her body pulled into a compact bow.",
+    anchor: "Her bound ankles are pulled up tight against her bound wrists behind her back." },
+  standard: { hint: "", anchor: "Her bound ankles are pulled up and tied to her bound wrists behind her back." },
+  loose: { hint: "It is a loose hogtie: a longer rope leaves a gap of about a foot between her bound wrists and her bound ankles, her knees bent at an easy angle.",
+    anchor: "A rope joins her bound ankles to her bound wrists behind her back." },
+};
+const TIE_PICKS = ["strict", "strict", "standard", "standard", "loose"];
+// Small details (rope wraps, knots) blur at this size unless asked for (see PLAN.md, 2026-11-21).
+const ROPE_CLARITY = "The rope wraps and knots around her wrists and ankles are sharp and clearly visible.";
 
 function promptDetail(prompt) {
   const p = String(prompt || "").replace(/\b(the )?(woman|girl|lady|person) (from|in) (image|picture|photo) \d\b/gi, "");
@@ -460,9 +490,27 @@ function loraPromptHints(prompt, loras, isEdit = false, seed = null, hasRefs = f
       if (!hasRefs && !LOOK_WORDS.test(prompt)) hints.push(pickFor(LOOK_HINTS, seed, 23));
     }
   }
+  const ownPose = detail === "detailed" && POSE_DETAIL_WORDS.test(prompt);
+  // Hogtie: how tight, its closing reminder and the rope-detail sentence (see TIE_STYLES).
+  const hogtie = ls.some((l) => l.poseAnchors) && HOGTIE_WORDS.test(prompt);
+  let style = "standard";
+  if (TIGHT_WORDS.test(prompt)) style = "strict";
+  else if (LOOSE_WORDS.test(prompt)) style = "loose";
+  else if (seed != null && detail !== "detailed" && !isEdit) style = pickFor(TIE_PICKS, seed, 29);
+  if (hogtie && !ownPose && TIE_STYLES[style].hint) hints.splice(1, 0, TIE_STYLES[style].hint);
+  // Body type goes first (see BODY_HINTS).
+  if (!isEdit && !hasRefs && seed != null && detail !== "detailed" && !BODY_WORDS.test(prompt)) {
+    const body = pickFor(BODY_HINTS, seed, 31);
+    hints.unshift(body.t);
+    if (body.heavy && style === "strict" && hogtie) hints.push("The tight rope presses into the soft skin of her wrists, ankles and thighs.");
+  }
   // When the pose wording was added, repeat its key part last (see poseAnchors).
-  if (!(detail === "detailed" && POSE_DETAIL_WORDS.test(prompt))) {
-    for (const l of ls) for (const [re, anchor] of l.poseAnchors || []) if (re.test(prompt)) hints.push(anchor);
+  if (!ownPose) {
+    for (const l of ls) for (const [re, anchor] of l.poseAnchors || []) {
+      if (!re.test(prompt)) continue;
+      hints.push(re === l.poseAnchors[0][0] && hogtie ? TIE_STYLES[style].anchor : anchor);
+      if (hogtie && !isEdit) hints.push(ROPE_CLARITY);
+    }
   }
   return hints.length ? " " + hints.join(" ") : "";
 }
