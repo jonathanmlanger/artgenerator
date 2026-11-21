@@ -17,7 +17,7 @@ A private image generator for the owner's own use: realistic, adult-only bondage
 - Keys come only from the cloud environment settings: `RUNPOD_API`, `CIVITAI_API`, `CLOUDFLARE_API_TOKEN`. Never print, log or commit any part of them; never ask for them in chat. Remind the owner to delete keys they no longer need.
 - RunPod management API: `https://api.runpod.io/graphql` (worker logs: `https://api.runpod.io/v2/serverless/<endpoint>/workers/<pod>/logs?follow=true`). `rest.runpod.io` is not reachable from the container. Jobs: `https://api.runpod.ai/v2/<endpoint>/run`.
 - Before changing a RunPod template or endpoint, save its current settings to the scratchpad and verify afterwards that only the intended fields changed. Anything that costs money (volumes, idle time, GPUs) needs the owner's OK first.
-- Only adult characters; the app refuses prompts that mention minors. The owner's rule from the start is "no X-rated"; keep defaults and add-on suggestions within it unless the owner says otherwise. Reference photos should be AI-made characters or people who agreed.
+- Only adult characters; the app refuses prompts that mention minors. Content rule (owner, 2026-11-21): nudity is fine, especially with rope work, and "a little X-rated" is OK as long as it stays ethical and is not specifically pornographic (no sex acts, no explicit focus on genitals). Pictures are clothed unless the prompt asks for nudity. Keep add-on suggestions within this rule. Reference photos should be AI-made characters or people who agreed.
 
 ## Deploy
 
