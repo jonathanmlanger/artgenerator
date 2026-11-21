@@ -250,7 +250,7 @@ const LORAS = {
       [/\bhog[- ]?(tie[ds]?|tying)\b/i, [
         "She is lying on her stomach in a tight hogtie: her wrists are tied behind her back and pulled to her ankles, her knees bent and her feet raised behind her.",
         "She is hogtied face down: her arms are bound behind her back at the wrists and elbows, her ankles are crossed and tied, and a short rope joins her ankles to her wrists, pulling her feet up.",
-        "She is lying on her side, hogtied: her wrists are tied behind her back, her ankles are tied together, and a rope joins wrists and ankles so her legs are bent back behind her.",
+        "She is lying on her side in a tight hogtie: her wrists are tied behind her back, her ankles are tied together, and her knees are bent sharply so her bound ankles are pulled up behind her and tied to her bound wrists with a short rope.",
         "She is lying on her stomach, hogtied with extra rope around her thighs and knees; her bound wrists are tied to her bound ankles behind her and her feet point upward.",
         "She is hogtied on her stomach with rope wrapped around her chest and upper arms, her wrists tied behind her back and joined to her ankles, her head raised.",
       ]],
