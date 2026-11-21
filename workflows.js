@@ -392,7 +392,11 @@ function pickFor(list, seed, salt) {
 //   "detailed" (long, or names three or more of the things below) -> the prompt leads: no angle, place or
 //              style picks, and no pose wording if the prompt describes how she is tied. Only an outfit
 //              is added when none is named (this LoRA drifts to nudity without one).
-const POSE_DETAIL_WORDS = /\b(wrists?|ankles?|elbows?|knees?|thighs?|arms?|legs?|feet|toes?|on her (side|stomach|back|front|belly|knees)|face[- ]?down|chest|waist|harness|frog[- ]?tie[ds]?|box[- ]?tie|kneeling|crossed)\b/i;
+// Words about how she's tied (for promptDetail). "thigh-high" and "harness gag" are clothing/gag words, not pose.
+const POSE_DETAIL_WORDS = /\b(wrists?|ankles?|elbows?|knees?|thighs?(?!-)|arms?|legs?|feet|toes?|on her (side|stomach|back|front|belly|knees)|face[- ]?down|chest|waist|frog[- ]?tie[ds]?|box[- ]?tie|kneeling|crossed)\b/i;
+// The prompt itself says how wrists and ankles are joined: only then is the pose wording left out (tested:
+// "hogtied" alone, without that wording, gave standing women).
+const TIE_DESCRIBED = /\b(wrists?|hands?)\b[^.]*\b(ankles?|feet)\b|\b(ankles?|feet)\b[^.]*\b(wrists?|hands?)\b/i;
 const GAG_DETAIL_WORDS = /\b(strap(s|ped)?|buckle[ds]?|between her (lips|teeth)|behind her head|harness)\b/i;
 const LIGHT_WORDS = /\b(light(ing|s)?|lit|sun(light|lit|set)?|dark|dim|shadows?|candle(s|light)?|lamp|night|morning|evening|golden hour|moody|bright)\b/i;
 const LOOK_WORDS = /\b(hair|blonde?|brunette|redhead|ginger|curly|ponytail|braids?|bun|freckles?|her (twenties|thirties|forties|fifties)|\d\d[- ]year[- ]old|image \d|picture \d|photo \d)\b/i;
@@ -424,7 +428,7 @@ const ROPE_HINTS = ["The rope is natural tan jute.", "The rope is red.", "The ro
 // Body type, picked when the prompt and reference pictures say nothing about it, and placed first (tested
 // earlier: body wording at the start is followed best). Height and feet differ too, so not every woman
 // comes out the same size. heavy: soft body, so a strict tie gets a sentence about the rope pressing in.
-const BODY_WORDS = /\b(petite|short|tall|slim|slender|skinny|thin|athletic|toned|muscular|fit|curvy|chubby|plump|heavy|heavier|heavyset|fat|plus[- ]size|full[- ]figured|thick|bbw|voluptuous|busty|stocky|lanky|small[- ]framed|body|build|figure)\b/i;
+const BODY_WORDS = /\b(petite|short(?=[ -](and|woman|girl|height|frame|stature|build|with))|tall|slim|slender|skinny|athletic|toned|muscular|curvy|chubby|plump|heavy|heavier|heavyset|fat|plus[- ]size|full[- ]figured|thick(?=[ -]?(thighs?|body|build|figure|hips|woman))|bbw|voluptuous|busty|stocky|lanky|small[- ]framed|(her|a|an) \w+ (body|build|figure))\b/i;
 const BODY_HINTS = [
   { t: "She is petite and short, with a small frame and small, narrow feet." },
   { t: "She is slim and of average height, with slender arms and legs." },
@@ -474,7 +478,7 @@ function loraPromptHints(prompt, loras, isEdit = false, seed = null, hasRefs = f
     if (detail !== "detailed") return true;
     // A detailed prompt that already says how she's tied (or how the gag sits) keeps its own wording.
     const isGag = /gag/.test(re.source);
-    return !(isGag ? GAG_DETAIL_WORDS : POSE_DETAIL_WORDS).test(prompt);
+    return !(isGag ? GAG_DETAIL_WORDS : TIE_DESCRIBED).test(prompt);
   }).map(([, wordings], k) => choose([].concat(wordings), 11 + k)));
   const clothing = ls.find((l) => l.clothingHints)?.clothingHints;
   if (!isEdit) {
@@ -490,7 +494,7 @@ function loraPromptHints(prompt, loras, isEdit = false, seed = null, hasRefs = f
       if (!hasRefs && !LOOK_WORDS.test(prompt)) hints.push(pickFor(LOOK_HINTS, seed, 23));
     }
   }
-  const ownPose = detail === "detailed" && POSE_DETAIL_WORDS.test(prompt);
+  const ownPose = detail === "detailed" && TIE_DESCRIBED.test(prompt);
   // Hogtie: how tight, its closing reminder and the rope-detail sentence (see TIE_STYLES).
   const hogtie = ls.some((l) => l.poseAnchors) && HOGTIE_WORDS.test(prompt);
   let style = "standard";
@@ -504,13 +508,12 @@ function loraPromptHints(prompt, loras, isEdit = false, seed = null, hasRefs = f
     hints.unshift(body.t);
     if (body.heavy && style === "strict" && hogtie) hints.push("The tight rope presses into the soft skin of her wrists, ankles and thighs.");
   }
-  // When the pose wording was added, repeat its key part last (see poseAnchors).
-  if (!ownPose) {
-    for (const l of ls) for (const [re, anchor] of l.poseAnchors || []) {
-      if (!re.test(prompt)) continue;
-      hints.push(re === l.poseAnchors[0][0] && hogtie ? TIE_STYLES[style].anchor : anchor);
-      if (hogtie && !isEdit) hints.push(ROPE_CLARITY);
-    }
+  // Repeat the key part of the pose last (see poseAnchors). Always, even when the prompt describes the tie:
+  // it agrees with any hogtie and keeps a long prompt from losing it.
+  for (const l of ls) for (const [re, anchor] of l.poseAnchors || []) {
+    if (!re.test(prompt)) continue;
+    hints.push(re === l.poseAnchors[0][0] && hogtie ? TIE_STYLES[style].anchor : anchor);
+    if (hogtie && !isEdit) hints.push(ROPE_CLARITY);
   }
   return hints.length ? " " + hints.join(" ") : "";
 }
