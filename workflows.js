@@ -252,7 +252,6 @@ const LORAS = {
         "She is hogtied face down: her arms are bound behind her back at the wrists and elbows, her ankles are crossed and tied, and a short rope joins her ankles to her wrists, pulling her feet up.",
         "She is lying on her side in a tight hogtie: her wrists are tied behind her back, her ankles are tied together, and her knees are bent sharply so her bound ankles are pulled up behind her and tied to her bound wrists with a short rope.",
         "She is lying on her stomach, hogtied with extra rope around her thighs and knees; her bound wrists are tied to her bound ankles behind her and her feet point upward.",
-        "She is hogtied on her stomach with rope wrapped around her chest and upper arms, her wrists tied behind her back and joined to her ankles, her head raised.",
       ]],
       [/\b(tied to a chair|chair[- ]?tie[ds]?|bound to a chair)\b/i, [
         "She is sitting on a chair, bound to it with rope wrapped around her chest and the chair back, her wrists tied behind the chair and her ankles tied to the chair legs.",
@@ -280,6 +279,11 @@ const LORAS = {
       "She is fully clothed, wearing a knee-length summer dress.",
       "She is fully clothed, wearing a blazer, a silk blouse and trousers.",
       "She is fully clothed, wearing a turtleneck and a plaid skirt with tights.",
+    ],
+    // A short reminder added at the very end of the prompt, after outfit/place/light, so a long prompt
+    // doesn't lose the key part of the pose (tested: with many added details the ankles came loose from the wrists).
+    poseAnchors: [
+      [/\bhog[- ]?(tie[ds]?|tying)\b/i, "Her bound ankles are pulled up and tied to her bound wrists behind her back."],
     ],
     // A lying-down pose comes out sitting or kneeling in a tall frame (tested), so hogties use landscape.
     widePrompt: /\bhog[- ]?(tie[ds]?|tying)\b/i,
@@ -455,6 +459,10 @@ function loraPromptHints(prompt, loras, isEdit = false, seed = null, hasRefs = f
       if (!LIGHT_WORDS.test(prompt)) hints.push(pickFor(LIGHT_HINTS, seed, 19));
       if (!hasRefs && !LOOK_WORDS.test(prompt)) hints.push(pickFor(LOOK_HINTS, seed, 23));
     }
+  }
+  // When the pose wording was added, repeat its key part last (see poseAnchors).
+  if (!(detail === "detailed" && POSE_DETAIL_WORDS.test(prompt))) {
+    for (const l of ls) for (const [re, anchor] of l.poseAnchors || []) if (re.test(prompt)) hints.push(anchor);
   }
   return hints.length ? " " + hints.join(" ") : "";
 }
