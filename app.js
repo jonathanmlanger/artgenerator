@@ -436,7 +436,7 @@ function prepareSettings(prompt, refList, mode = refMode()) {
   // Automatic mode also spells out the pose and gag the way the LoRA was trained (kept apart from the
   // prompt, so reusing an image's settings doesn't repeat it).
   // The picture number (seed) picks the wordings, outfit, angle and place, so "Repeat a picture" repeats them.
-  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras, edit, settings.seed);
+  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras, edit, settings.seed, useRefs.length > 0);
   return { settings, useRefs };
 }
 

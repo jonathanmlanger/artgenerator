@@ -380,20 +380,81 @@ function pickFor(list, seed, salt) {
   return list[(x >>> 0) % list.length];
 }
 
+// How much the prompt already says, so the extra wording can match it:
+//   "vague"    (short, says little: "hogtied and ballgagged") -> be creative: varied pose, outfit, angle and
+//              place, plus rope colour, shoes, lighting and (without a reference picture) her look.
+//   "some"     -> fill in only what's missing (outfit, angle, place).
+//   "detailed" (long, or names three or more of the things below) -> the prompt leads: no angle, place or
+//              style picks, and no pose wording if the prompt describes how she is tied. Only an outfit
+//              is added when none is named (this LoRA drifts to nudity without one).
+const POSE_DETAIL_WORDS = /\b(wrists?|ankles?|elbows?|knees?|thighs?|arms?|legs?|feet|toes?|on her (side|stomach|back|front|belly|knees)|face[- ]?down|chest|waist|harness|frog[- ]?tie[ds]?|box[- ]?tie|kneeling|crossed)\b/i;
+const GAG_DETAIL_WORDS = /\b(strap(s|ped)?|buckle[ds]?|between her (lips|teeth)|behind her head|harness)\b/i;
+const LIGHT_WORDS = /\b(light(ing|s)?|lit|sun(light|lit|set)?|dark|dim|shadows?|candle(s|light)?|lamp|night|morning|evening|golden hour|moody|bright)\b/i;
+const LOOK_WORDS = /\b(hair|blonde?|brunette|redhead|ginger|curly|ponytail|braids?|bun|freckles?|tall|petite|slim|curvy|athletic|plus[- ]size|her (twenties|thirties|forties|fifties)|\d\d[- ]year[- ]old|image \d|picture \d|photo \d)\b/i;
+const FOOT_WORDS = /\b(barefoot|bare feet|shoes?|heels?|boots?|sneakers?|trainers?|socks?|stockings?|tights|feet)\b/i;
+const ROPE_COLOUR_WORDS = /\b(red|black|white|blue|pink|green|purple|yellow|jute|hemp|cotton|nylon|silk|tape|cuffs?|chains?)\b[^.]*\b(rope|ropes|cord|tied|bound)|\b(rope|ropes|cord)\b[^.]*\b(red|black|white|blue|pink|green|purple|jute|hemp|cotton|nylon)\b/i;
+const LIGHT_HINTS = [
+  "Soft natural window light.",
+  "Warm evening lamp light with deep shadows.",
+  "Bright, even daylight.",
+  "Moody low light from a single lamp.",
+  "Golden late-afternoon sunlight across the room.",
+  "Cool overcast light from a large window.",
+];
+const LOOK_HINTS = [
+  "She is a woman in her late twenties with long straight dark hair.",
+  "She is a woman in her thirties with shoulder-length blonde hair.",
+  "She is a woman in her early thirties with curly red hair.",
+  "She is a woman in her forties with short brown hair.",
+  "She is a woman in her late twenties with a long brown braid.",
+  "She is a woman in her thirties with wavy auburn hair in a ponytail.",
+  "She is a slim woman in her twenties with straight black hair in a bun.",
+  "She is a woman in her thirties with honey-blonde hair, slightly messy.",
+];
+const FOOT_HINTS = ["She is barefoot.", "She is wearing black high heels.", "She is wearing white socks.",
+  "She is wearing ankle boots.", "She is wearing sneakers.", "She is wearing sheer tights and no shoes."];
+const ROPE_HINTS = ["The rope is natural tan jute.", "The rope is red.", "The rope is black.",
+  "The rope is white cotton.", "The rope is natural tan jute."];
+
+function promptDetail(prompt) {
+  const p = String(prompt || "").replace(/\b(the )?(woman|girl|lady|person) (from|in) (image|picture|photo) \d\b/gi, "");
+  const words = (p.match(/[a-z0-9'-]+/gi) || []).length;
+  const named = [CLOTHING_WORDS, CAMERA_WORDS, SETTING_WORDS, POSE_DETAIL_WORDS, LIGHT_WORDS, LOOK_WORDS, FOOT_WORDS,
+    ROPE_COLOUR_WORDS].filter((re) => re.test(p)).length;
+  if (words >= 35 || named >= 3) return "detailed";
+  if (words <= 12 && named <= 1) return "vague";
+  return "some";
+}
+
 // Sentences the picked LoRAs add to the prompt (see promptHints and clothingHints), as one string
-// starting with a space. Edits (isEdit) get only the pose/gag wording: no outfit, angle or place, which
-// would change the picture being edited. Without a seed the first wording of each list is used.
-function loraPromptHints(prompt, loras, isEdit = false, seed = null) {
+// starting with a space, sized to how much the prompt already says (promptDetail). Edits (isEdit) get
+// only the pose/gag wording: no outfit, angle or place, which would change the picture being edited.
+// Without a seed the first wording of each list is used and nothing random is added. hasRefs: a reference
+// picture is attached, so her look comes from it.
+function loraPromptHints(prompt, loras, isEdit = false, seed = null, hasRefs = false) {
   const ls = (loras || []).map((l) => LORAS[l.id]).filter(Boolean);
   if (!ls.length) return "";
+  const detail = promptDetail(prompt);
   const choose = (list, salt) => (seed == null ? list[0] : pickFor(list, seed, salt));
-  const hints = ls.flatMap((l) => (l.promptHints || []).filter(([re]) => re.test(prompt))
-    .map(([, wordings], k) => choose([].concat(wordings), 11 + k)));
+  const hints = ls.flatMap((l) => (l.promptHints || []).filter(([re]) => re.test(prompt)).filter(([re]) => {
+    if (detail !== "detailed") return true;
+    // A detailed prompt that already says how she's tied (or how the gag sits) keeps its own wording.
+    const isGag = /gag/.test(re.source);
+    return !(isGag ? GAG_DETAIL_WORDS : POSE_DETAIL_WORDS).test(prompt);
+  }).map(([, wordings], k) => choose([].concat(wordings), 11 + k)));
   const clothing = ls.find((l) => l.clothingHints)?.clothingHints;
   if (!isEdit) {
     if (clothing && !CLOTHING_WORDS.test(prompt)) hints.push(choose(clothing, 3));
-    if (seed != null && !CAMERA_WORDS.test(prompt)) hints.push(pickFor(CAMERA_HINTS, seed, 5));
-    if (seed != null && !SETTING_WORDS.test(prompt)) hints.push(pickFor(SETTING_HINTS, seed, 7));
+    if (seed != null && detail !== "detailed") {
+      if (!CAMERA_WORDS.test(prompt)) hints.push(pickFor(CAMERA_HINTS, seed, 5));
+      if (!SETTING_WORDS.test(prompt)) hints.push(pickFor(SETTING_HINTS, seed, 7));
+    }
+    if (seed != null && detail === "vague") {
+      if (/\b(rope[sd]?|tied|bound|hog[- ]?tie)/i.test(prompt) && !ROPE_COLOUR_WORDS.test(prompt)) hints.push(pickFor(ROPE_HINTS, seed, 13));
+      if (!FOOT_WORDS.test(prompt)) hints.push(pickFor(FOOT_HINTS, seed, 17));
+      if (!LIGHT_WORDS.test(prompt)) hints.push(pickFor(LIGHT_HINTS, seed, 19));
+      if (!hasRefs && !LOOK_WORDS.test(prompt)) hints.push(pickFor(LOOK_HINTS, seed, 23));
+    }
   }
   return hints.length ? " " + hints.join(" ") : "";
 }
