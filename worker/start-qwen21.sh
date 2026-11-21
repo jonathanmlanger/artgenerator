@@ -90,7 +90,9 @@ else
     left=$(( DEADLINE - $(date +%s) ))
     if [ "$left" -lt 15 ]; then log "no time left this start for $path; it downloads on the next start"; continue; fi
     log "downloading $path ($((bytes / 1000000)) MB, up to ${left}s this start)"
-    err=$(timeout "$left" wget -nv -c --tries=5 --waitretry=5 -O "$f.part" "$HF/$path" 2>&1 | tail -3)
+    # Hugging Face keeps them in diffusion_models/ and text_encoders/ (ComfyUI reads unet/ and clip/ here).
+    hfpath="${path/#unet\//diffusion_models/}"; hfpath="${hfpath/#clip\//text_encoders/}"
+    err=$(timeout "$left" wget -nv -c --tries=5 --waitretry=5 -O "$f.part" "$HF/$hfpath" 2>&1 | tail -3)
     got=$(stat -c %s "$f.part" 2>/dev/null || echo 0)
     if [ "$got" != "$bytes" ]; then
       log "ERROR: $path is $got of $bytes bytes after the download; it resumes on the next start. wget: $err"
