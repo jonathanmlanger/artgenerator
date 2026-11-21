@@ -252,9 +252,12 @@ let view = "chat";
 // Every picture is made with Qwen-Image 2.1 (MAIN_MODEL); attached images are its references, used as the
 // prompt says ("the woman from image 1", "in the pose from image 2", "change her shirt in image 1").
 const MAIN_MODEL = "qwen-image-21";
+// "More variety" in the menu switches to the full (non-Turbo) model: slower, less samey.
+const VARIETY_MODEL = "qwen-image-21-full";
+function varietyOn() { return store.get("ui_variety") === "1"; }
 function refMode() { return refs.length ? "refs" : "none"; }
 // In chat view the panel's own reference mode is not used, so the model picker is always free.
-function effectiveModelId() { return MAIN_MODEL; }
+function effectiveModelId() { return varietyOn() ? VARIETY_MODEL : MAIN_MODEL; }
 
 function initControls() {
   const sizes = $("sizes");
@@ -266,6 +269,9 @@ function initControls() {
     sizes.append(b);
   }
   setSize(store.get("ui_size") || "Auto");
+
+  $("variety").checked = varietyOn();
+  $("variety").addEventListener("change", () => { store.set("ui_variety", $("variety").checked ? "1" : "0", true); renderLoras(); });
 
   $("prompt").value = store.get("ui_prompt") || "";
   $("prompt").addEventListener("input", () => { store.set("ui_prompt", $("prompt").value, true); updateLoraPreview(); });
@@ -390,7 +396,7 @@ function setStatus(msg, isError = false) {
 // Builds the job settings from the left panel plus a prompt and reference images.
 // Throws an Error with a user-facing message if something is missing.
 function prepareSettings(prompt, refList, mode = refMode()) {
-  const modelId = MAIN_MODEL;
+  const modelId = effectiveModelId();
   const m = MODELS[modelId];
   if (!prompt) throw new Error("Write a prompt first.");
   const useRefs = mode === "none" ? [] : refList.slice(0, REF_MODES.refs.maxImages);
@@ -429,7 +435,8 @@ function prepareSettings(prompt, refList, mode = refMode()) {
   };
   // Automatic mode also spells out the pose and gag the way the LoRA was trained (kept apart from the
   // prompt, so reusing an image's settings doesn't repeat it).
-  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras, edit);
+  // The picture number (seed) picks the wordings, outfit, angle and place, so "Repeat a picture" repeats them.
+  if (settings.loraAuto) settings.promptExtra = loraPromptHints(prompt, settings.loras, edit, settings.seed);
   return { settings, useRefs };
 }
 

@@ -173,6 +173,7 @@ input[type="range"] { padding: 0; accent-color: var(--accent); }
 .lora-row input[type="number"] { padding: 5px 8px; }
 .lora-row input:disabled { opacity: .5; }
 .lora-row .hint { grid-column: 1 / -1; margin: 0; }
+.variety-row { grid-template-columns: 1fr; }
 select:disabled { opacity: .6; }
 #wake.ready { color: var(--ok); border-color: var(--ok); }
 

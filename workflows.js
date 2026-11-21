@@ -2,6 +2,45 @@
 // Node settings come from the official ComfyUI workflow templates for these models.
 // Each builder receives the user's settings and returns a workflow object for worker-comfyui.
 
+// Qwen-Image 2.1 graph, from the official ComfyUI templates. full = the non-Turbo model with a plain
+// 30-step KSampler (cfg 1, as in the template); otherwise the Turbo model with its 8-step schedule.
+function buildQwen21(s, full) {
+  const g = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: full ? "qwen_image_2.1_int8_convrot.safetensors" : "qwen_image_2.1_turbo_int8_convrot.safetensors", weight_dtype: "default" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_int8_convrot.safetensors", type: "qwen_image", device: "default" } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_2.1_vae_bf16.safetensors" } },
+    "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
+    "5": { class_type: "TextEncodeQwenImage21", inputs: { clip: ["2", 0], vae: ["3", 0], prompt: s.prompt, negative_prompt: "", resolution: 1024 } },
+    "6": { class_type: "EmptyLatentImage", inputs: { width: s.width, height: s.height, batch_size: s.count } },
+    // The Turbo model's own 8-step schedule from the template.
+    "7": { class_type: "ManualSigmas", inputs: { sigmas: "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0" } },
+    "8": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
+    "9": { class_type: "RandomNoise", inputs: { noise_seed: s.seed } },
+    "11": { class_type: "CFGGuider", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["5", 1], cfg: 1 } },
+    "12": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["11", 0], sampler: ["8", 0], sigmas: ["7", 0], latent_image: ["6", 0] } },
+    "13": { class_type: "VAEDecode", inputs: { samples: ["12", 0], vae: ["3", 0] } },
+    "10": { class_type: "SaveImage", inputs: { images: ["13", 0], filename_prefix: "studio" } },
+  };
+  (s.refNames || []).slice(0, 3).forEach((name, i) => {
+    const id = String(30 + i);
+    g[id] = { class_type: "LoadImage", inputs: { image: name } };
+    g["5"].inputs[`images.image_${i + 1}`] = [id, 0];
+  });
+  // followImage1: the canvas takes image 1's size and shape (the encoder's latent, as in the official
+  // edit template), for edits of an existing picture; otherwise width/height.
+  if (s.followImage1 && s.refNames?.length) {
+    g["6"] = { class_type: "RepeatLatentBatch", inputs: { samples: ["5", 2], amount: s.count } };
+  }
+  if (full) {
+    // The full model's template: a plain KSampler, euler / simple, cfg 1.
+    for (const id of ["7", "8", "9", "11"]) delete g[id];
+    g["12"] = { class_type: "KSampler", inputs: {
+      model: ["4", 0], positive: ["5", 0], negative: ["5", 1], latent_image: ["6", 0],
+      seed: s.seed, steps: s.steps || 30, cfg: 1, sampler_name: "euler", scheduler: "simple", denoise: 1 } };
+  }
+  return g;
+}
+
 const MODELS = {
   // Text-to-image and reference images in one model (Comfy-Org repackage, Turbo int8; ComfyUI 0.37+,
   // see worker/start-qwen21.sh, which puts the files in the volume's unet/ and clip/ folders). Node layout follows the official "Qwen Image 2.1 Turbo" templates.
@@ -13,35 +52,19 @@ const MODELS = {
     endpoint: "edit", // its files and the newer ComfyUI are set up on the edit endpoint (worker/start-qwen21.sh)
     supportsNegative: false,
     defaults: { steps: 8, cfg: 1 },
-    build: (s) => {
-      const g = {
-        "1": { class_type: "UNETLoader", inputs: { unet_name: "qwen_image_2.1_turbo_int8_convrot.safetensors", weight_dtype: "default" } },
-        "2": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_int8_convrot.safetensors", type: "qwen_image", device: "default" } },
-        "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_2.1_vae_bf16.safetensors" } },
-        "4": { class_type: "QwenImage21Cache", inputs: { model: ["1", 0], device: "auto", dtype: "default" } },
-        "5": { class_type: "TextEncodeQwenImage21", inputs: { clip: ["2", 0], vae: ["3", 0], prompt: s.prompt, negative_prompt: "", resolution: 1024 } },
-        "6": { class_type: "EmptyLatentImage", inputs: { width: s.width, height: s.height, batch_size: s.count } },
-        // The Turbo model's own 8-step schedule from the template.
-        "7": { class_type: "ManualSigmas", inputs: { sigmas: "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0" } },
-        "8": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
-        "9": { class_type: "RandomNoise", inputs: { noise_seed: s.seed } },
-        "11": { class_type: "CFGGuider", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["5", 1], cfg: 1 } },
-        "12": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["9", 0], guider: ["11", 0], sampler: ["8", 0], sigmas: ["7", 0], latent_image: ["6", 0] } },
-        "13": { class_type: "VAEDecode", inputs: { samples: ["12", 0], vae: ["3", 0] } },
-        "10": { class_type: "SaveImage", inputs: { images: ["13", 0], filename_prefix: "studio" } },
-      };
-      (s.refNames || []).slice(0, 3).forEach((name, i) => {
-        const id = String(30 + i);
-        g[id] = { class_type: "LoadImage", inputs: { image: name } };
-        g["5"].inputs[`images.image_${i + 1}`] = [id, 0];
-      });
-      // followImage1: the canvas takes image 1's size and shape (the encoder's latent, as in the official
-      // edit template), for edits of an existing picture; otherwise width/height.
-      if (s.followImage1 && s.refNames?.length) {
-        g["6"] = { class_type: "RepeatLatentBatch", inputs: { samples: ["5", 2], amount: s.count } };
-      }
-      return g;
-    },
+    build: (s) => buildQwen21(s, false),
+  },
+
+  // The full (non-Turbo) model: slower (30 steps) but more varied and natural. "More variety" in the menu.
+  "qwen-image-21-full": {
+    label: "Qwen-Image 2.1 (full model) — more variety, slower",
+    note: "30 steps instead of 8: about three to four times slower, with more varied poses and compositions.",
+    needsUpgrade: false,
+    endpoint: "edit",
+    hidden: true, // chosen with the "More variety" switch, not from a menu
+    supportsNegative: false,
+    defaults: { steps: 30, cfg: 1 },
+    build: (s) => buildQwen21(s, true),
   },
 
   "z-image-turbo": {
@@ -213,7 +236,7 @@ const LORAS = {
   "bondage-megapack": {
     label: "Pose & detail pack",
     file: "bondage_megapack_qwen21.safetensors",
-    models: ["qwen-image-21"],
+    models: ["qwen-image-21", "qwen-image-21-full"],
     strength: 1.0,
     fullStrength: true, // its author recommends 1.0 (1.2 if bodies warp); automatic mode doesn't lower it
     note: "Recommended for this model. Describe the pose and props in plain sentences.",
@@ -221,17 +244,43 @@ const LORAS = {
     keywords: /\b(hog[- ]?tie[ds]?|ball[- ]?gag(s|ged)?|gag(s|ged)?|rope[sd]?|tied|bound|bondage|restrained|tape[d]?|cuff(s|ed)?|shibari)\b/i,
     // Short prompts ("hogtied with a ballgag") often miss the pose; the LoRA was trained on these
     // descriptions (from its Civitai page), so automatic mode adds the matching ones behind the scenes.
+    // Each entry: [keyword, wordings]. One wording is picked per picture (see pickFor), so poses vary
+    // while the key part (e.g. ankles tied to wrists) stays.
     promptHints: [
-      [/\bhog[- ]?(tie[ds]?|tying)\b/i, "She is lying on her stomach, bound in a hogtied pose with her arms pulled behind her back and her legs bent upwards. Her wrists and ankles are tied with rope, and her ankles are tied to her bound wrists."],
-      [/\b(tied to a chair|chair[- ]?tie[ds]?|bound to a chair)\b/i, "She is sitting on a chair, bound to it with rope wrapped around her chest and the chair back, her wrists tied behind the chair and her ankles tied to the chair legs."],
-      [/\bball[- ]?gag(s|ged)?\b/i, "She has a ball gag in her mouth fastened with leather straps behind her head."],
-      [/\bcleave[- ]?gag(s|ged)?\b/i, "She has a strip of cloth cleave gag between her lips fastened behind her head."],
-      [/\btape[- ]?gag(s|ged)?\b/i, "She has a tape gag wrapped tightly around her mouth, looping behind her head."],
-      [/\b(otm|over[- ]the[- ]mouth)\b/i, "She has a wide strip of cloth covering her mouth as a gag, fastened behind her head."],
+      [/\bhog[- ]?(tie[ds]?|tying)\b/i, [
+        "She is lying on her stomach in a tight hogtie: her wrists are tied behind her back and pulled to her ankles, her knees bent and her feet raised behind her.",
+        "She is hogtied face down: her arms are bound behind her back at the wrists and elbows, her ankles are crossed and tied, and a short rope joins her ankles to her wrists, pulling her feet up.",
+        "She is lying on her side, hogtied: her wrists are tied behind her back, her ankles are tied together, and a rope joins wrists and ankles so her legs are bent back behind her.",
+        "She is lying on her stomach, hogtied with extra rope around her thighs and knees; her bound wrists are tied to her bound ankles behind her and her feet point upward.",
+        "She is hogtied on her stomach with rope wrapped around her chest and upper arms, her wrists tied behind her back and joined to her ankles, her head raised.",
+      ]],
+      [/\b(tied to a chair|chair[- ]?tie[ds]?|bound to a chair)\b/i, [
+        "She is sitting on a chair, bound to it with rope wrapped around her chest and the chair back, her wrists tied behind the chair and her ankles tied to the chair legs.",
+        "She is tied to a chair: rope crosses her chest and waist and holds her to the backrest, her arms are tied behind the chair, and her knees and ankles are bound together.",
+        "She sits on a chair with her wrists tied to the armrests and her ankles tied to the front legs, a rope around her waist holding her against the backrest.",
+      ]],
+      [/\bball[- ]?gag(s|ged)?\b/i, [
+        "She has a ball gag in her mouth fastened with leather straps behind her head.",
+        "A ball gag is strapped firmly between her lips, its strap buckled behind her head under her hair.",
+      ]],
+      [/\bcleave[- ]?gag(s|ged)?\b/i, [
+        "She has a strip of cloth cleave gag between her lips fastened behind her head.",
+        "A knotted cloth is pulled between her teeth as a cleave gag and tied tightly behind her head.",
+      ]],
+      [/\btape[- ]?gag(s|ged)?\b/i, ["She has a tape gag wrapped tightly around her mouth, looping behind her head."]],
+      [/\b(otm|over[- ]the[- ]mouth)\b/i, ["She has a wide strip of cloth covering her mouth as a gag, fastened behind her head."]],
     ],
     // Without clothes in the prompt, this LoRA drifts towards underwear or nudity (tested), so automatic
-    // mode adds this when the prompt names no clothing.
-    clothingHint: "She is fully clothed, wearing a long-sleeved sweater and full-length jeans.",
+    // mode names an outfit (picked per picture) when the prompt names no clothing.
+    clothingHints: [
+      "She is fully clothed, wearing a long-sleeved sweater and full-length jeans.",
+      "She is fully clothed, wearing a white blouse and a black pencil skirt.",
+      "She is fully clothed, wearing a fitted long-sleeved t-shirt and leggings.",
+      "She is fully clothed, wearing a flannel shirt and jeans.",
+      "She is fully clothed, wearing a knee-length summer dress.",
+      "She is fully clothed, wearing a blazer, a silk blouse and trousers.",
+      "She is fully clothed, wearing a turtleneck and a plaid skirt with tights.",
+    ],
     // A lying-down pose comes out sitting or kneeling in a tall frame (tested), so hogties use landscape.
     widePrompt: /\bhog[- ]?(tie[ds]?|tying)\b/i,
   },
@@ -299,13 +348,53 @@ function isEditPrompt(prompt) {
   return /^\s*(in|on|for) (image|picture|photo) ?\d\b|^\s*(please\s+)?(change|make|replace|remove|add|turn|swap|give|recolou?r|edit|put|take|tighten|loosen|move|fix)\b/i.test(prompt || "");
 }
 
-// Sentences the picked LoRAs add to the prompt (see promptHints and clothingHint), as one string
-// starting with a space. Edits get no clothing sentence (see isEditPrompt).
-function loraPromptHints(prompt, loras, isEdit = false) {
+// Camera angle and place, picked per picture when the prompt names neither, so pictures don't all share
+// the model's favourite framing.
+const CAMERA_HINTS = [
+  "Photographed from the side at floor level.",
+  "Three-quarter view from slightly above.",
+  "Seen from above, looking down at her.",
+  "Full-body shot from a low angle close to the floor.",
+  "Medium shot from the front at eye level.",
+  "Wide shot that shows the whole room around her.",
+];
+const CAMERA_WORDS = /\b(from (above|below|behind|the side|the front|the back)|side view|close-?up|wide shot|medium shot|low angle|high angle|overhead|top-down|three-quarter|profile|full[- ]body|camera|angle|view|portrait|framing)\b/i;
+const SETTING_HINTS = [
+  "The scene is a sunlit living room with a wooden floor.",
+  "The scene is a dim bedroom with an unmade bed.",
+  "The scene is a cosy room with a rug in front of a fireplace.",
+  "The scene is an empty warehouse with a concrete floor and soft window light.",
+  "The scene is a modern apartment with a leather couch.",
+  "The scene is a photo studio with a plain grey backdrop.",
+  "The scene is a hotel room with white sheets.",
+  "The scene is a rustic cabin with wooden walls.",
+];
+const SETTING_WORDS = /\b(bed|bedroom|floor|room|couch|sofa|rug|carpet|studio|warehouse|basement|cabin|hotel|kitchen|office|barn|forest|woods|outdoors|outside|garage|attic|dungeon|backdrop|apartment|house|car|beach|garden|field|stage)\b/i;
+
+// A stable choice from a list for this picture: the same picture number (seed) gives the same choice, so
+// "Repeat a picture" repeats it; salt keeps different lists from moving in step.
+function pickFor(list, seed, salt) {
+  if (!list?.length) return undefined;
+  let x = (Math.floor(Number(seed) || 0) % 2147483647 + salt * 7919) | 0;
+  x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+  return list[(x >>> 0) % list.length];
+}
+
+// Sentences the picked LoRAs add to the prompt (see promptHints and clothingHints), as one string
+// starting with a space. Edits (isEdit) get only the pose/gag wording: no outfit, angle or place, which
+// would change the picture being edited. Without a seed the first wording of each list is used.
+function loraPromptHints(prompt, loras, isEdit = false, seed = null) {
   const ls = (loras || []).map((l) => LORAS[l.id]).filter(Boolean);
-  const hints = ls.flatMap((l) => (l.promptHints || []).filter(([re]) => re.test(prompt)).map(([, h]) => h));
-  const clothing = ls.find((l) => l.clothingHint)?.clothingHint;
-  if (clothing && !isEdit && !CLOTHING_WORDS.test(prompt)) hints.push(clothing);
+  if (!ls.length) return "";
+  const choose = (list, salt) => (seed == null ? list[0] : pickFor(list, seed, salt));
+  const hints = ls.flatMap((l) => (l.promptHints || []).filter(([re]) => re.test(prompt))
+    .map(([, wordings], k) => choose([].concat(wordings), 11 + k)));
+  const clothing = ls.find((l) => l.clothingHints)?.clothingHints;
+  if (!isEdit) {
+    if (clothing && !CLOTHING_WORDS.test(prompt)) hints.push(choose(clothing, 3));
+    if (seed != null && !CAMERA_WORDS.test(prompt)) hints.push(pickFor(CAMERA_HINTS, seed, 5));
+    if (seed != null && !SETTING_WORDS.test(prompt)) hints.push(pickFor(SETTING_HINTS, seed, 7));
+  }
   return hints.length ? " " + hints.join(" ") : "";
 }
 
