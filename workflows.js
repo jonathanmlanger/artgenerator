@@ -355,13 +355,16 @@ function isEditPrompt(prompt) {
 
 // Camera angle and place, picked per picture when the prompt names neither, so pictures don't all share
 // the model's favourite framing.
+// Tested (2026-11-21): "Medium shot from the front at eye level" made her stand or kneel in 5 of 6 pictures,
+// so every angle here names floor level or looks down on her lying down.
 const CAMERA_HINTS = [
   "Photographed from the side at floor level.",
   "Three-quarter view from slightly above.",
-  "Seen from above, looking down at her.",
+  "Seen from above, looking down at her as she lies on the floor.",
   "Full-body shot from a low angle close to the floor.",
-  "Medium shot from the front at eye level.",
-  "Wide shot that shows the whole room around her.",
+  "Close-up from the front at floor level: her face in the foreground and her bound feet raised behind her.",
+  "Seen from behind her feet at floor level: her bound ankles and soles in the foreground, her body stretching away from the camera.",
+  "Wide shot from floor level that shows the room around her as she lies on the floor.",
 ];
 const CAMERA_WORDS = /\b(from (above|below|behind|the side|the front|the back)|side view|close-?up|wide shot|medium shot|low angle|high angle|overhead|top-down|three-quarter|profile|full[- ]body|camera|angle|view|portrait|framing)\b/i;
 const SETTING_HINTS = [
