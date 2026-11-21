@@ -149,6 +149,23 @@ async function api(request, env, url) {
     return json({ ok: true }, 200, { "set-cookie": sessionCookie(await makeSession(env), SESSION_DAYS * 86400) });
   }
 
+  // Account balance, for the low-credit notice in the chat. Only the dollar amount is returned.
+  if (path === "balance" && method === "GET") {
+    const c = await loadConfig(env);
+    if (!c.runpodKey) return json({ balance: null });
+    try {
+      const res = await fetch("https://api.runpod.io/graphql", {
+        method: "POST",
+        headers: { authorization: `Bearer ${c.runpodKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ query: "query { myself { clientBalance } }" }),
+      });
+      const b = (await res.json().catch(() => null))?.data?.myself?.clientBalance;
+      return json({ balance: typeof b === "number" ? b : null });
+    } catch {
+      return json({ balance: null });
+    }
+  }
+
   // RunPod proxy: /api/runpod/<main|edit>/<run|health|status/ID|cancel/ID>
   let m = path.match(/^runpod\/(main|edit)\/(.+)$/);
   if (m) {

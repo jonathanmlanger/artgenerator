@@ -80,3 +80,4 @@ Stop typing keys on every device. Instead:
 | RunPod edit endpoint | `kql1vtdh6u4qhe` (Qwen Image Edit; L40S → RTX 4090) |
 | Network volume | `image-studio-models`, 70 GB, US-TX-3, ID `ng9zveug90` |
 | R2 bucket | `image-studio`; CORS allows only `https://jonathanmlanger.github.io` |
+- 2026-11-21: Low-balance notice. New `GET /api/balance` in the Worker asks RunPod's GraphQL API (`myself { clientBalance }`) with the saved key and returns only the dollar amount. The chat shows a red notice above the message box at $1 or less ("used up" at $0), checked on open and after each finished job (at most once a minute). UI checked with Playwright (desktop + iPhone, mocked balance). Not deployed yet: that session had no `CLOUDFLARE_API_TOKEN`, and api.runpod.io was blocked from the container, so the live RunPod call is still untested.

@@ -124,6 +124,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .status { font-size: 13px; color: var(--muted); margin: 0 0 10px; white-space: pre-wrap; }
 .status:empty { display: none; }
 .status.error { color: var(--danger); }
+.low-balance {
+  margin: 0 12px 8px; padding: 8px 12px; font-size: 13px; line-height: 1.4;
+  border: 1px solid var(--danger); border-radius: var(--radius); color: var(--danger); background: var(--panel);
+}
 
 .gallery-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
 .gallery {

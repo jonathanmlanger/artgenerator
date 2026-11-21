@@ -497,8 +497,29 @@ async function runJob(input, onProgress, track = true, endpoint) {
     const result = await rp(`/status/${job.id}`, {}, endpoint);
     if (result.status === "IN_QUEUE" || result.status === "IN_PROGRESS") {
       onProgress?.(result.status, Math.round((Date.now() - started) / 1000));
-    } else return result;
+    } else { checkBalance(); return result; }
   }
+}
+
+// ---------- Low balance notice ----------
+// Shows a notice above the chat box when the RunPod account has $1 or less left.
+// Checked when the app opens and after each finished picture (at most once a minute).
+const LOW_BALANCE = 1;
+let balanceCheckedAt = 0;
+async function checkBalance(force = false) {
+  if (!server?.runpodKeySet) return;
+  if (!force && Date.now() - balanceCheckedAt < 60000) return;
+  balanceCheckedAt = Date.now();
+  try {
+    const r = await fetch("/api/balance", { cache: "no-store", credentials: "same-origin" });
+    const { balance } = r.ok ? await r.json() : {};
+    if (typeof balance !== "number") return;
+    const el = $("lowBalance");
+    el.hidden = balance > LOW_BALANCE;
+    el.textContent = balance <= 0
+      ? "Your RunPod balance is used up. Add credit at runpod.io to keep making pictures."
+      : `Your RunPod balance is low ($${balance.toFixed(2)} left). Add credit at runpod.io soon.`;
+  } catch {}
 }
 
 // ---------- Wake up GPU ----------
@@ -1548,6 +1569,7 @@ function setBusy(b) {
   initLibrary();
   updateStorageHint();
   setView(store.get("ui_view") || "chat");
+  checkBalance(true);
   initSettings();
   applyServerUi();
   updateConn();
